@@ -1,0 +1,14 @@
+{
+  "name": "axo-link",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Always-on-top pill that tells you when an agent is waiting on you.",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test"
+  },
+  "devDependencies": {
+    "electron": "^44.0.0"
+  }
+}
