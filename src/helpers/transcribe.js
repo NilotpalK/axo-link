@@ -1,16 +1,17 @@
 'use strict';
 // Speech to text. Runs in main so the key never crosses into the renderer.
 //
-// ponytail: Groq's endpoint is OpenAI-shaped, so switching provider is BASE_URL
-// + MODEL and nothing else. A local whisper.cpp provider would slot in beside
-// transcribe() as a second branch -- add it when offline or privacy actually
-// bites, not before.
+// ponytail: these four constants are the whole provider. Groq serves the same
+// shape at api.groq.com/openai/v1/audio/transcriptions with
+// whisper-large-v3-turbo, so switching is this block and nothing else. A local
+// whisper.cpp provider would slot in beside transcribe() as a second branch --
+// add it when offline or privacy actually bites, not before.
 const secrets = require('./secrets');
 
-const BASE_URL = 'https://api.groq.com/openai/v1/audio/transcriptions';
-const MODEL = 'whisper-large-v3-turbo';
-const KEY_NAME = 'groq';
-const KEY_ENV = 'GROQ_API_KEY';
+const BASE_URL = 'https://api.openai.com/v1/audio/transcriptions';
+const MODEL = 'gpt-4o-mini-transcribe';
+const KEY_NAME = 'openai';
+const KEY_ENV = 'OPENAI_API_KEY';
 const TIMEOUT_MS = 30000;
 
 const noKey = () => Object.assign(new Error('No transcription key set.'), { code: 'NO_KEY' });

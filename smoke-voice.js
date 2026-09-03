@@ -4,7 +4,7 @@
 // that `say` still exists on this machine, and that the transcription endpoint
 // still answers in the shape transcribe() unpacks.
 //
-//   GROQ_API_KEY=gsk_... node smoke-voice.js
+//   OPENAI_API_KEY=sk-... node smoke-voice.js
 //
 // Synthesises a sentence with `say`, encodes it to the same WebM/Opus the
 // renderer's MediaRecorder produces, and round-trips it back to text.

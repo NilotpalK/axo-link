@@ -49,9 +49,9 @@ macOS `say` — no key, no network, no latency:
 The queue is serial, so two agents finishing together take turns instead of
 talking over each other.
 
-**You talk back.** `⌥Space` opens the mic (and cuts off whatever is speaking).
-It closes itself after ~1.2s of trailing silence, transcribes through Groq
-Whisper, and the text becomes the next turn.
+**You talk back.** `F13` opens the mic (and cuts off whatever is speaking).
+It closes itself after ~1.2s of trailing silence, transcribes through OpenAI
+(`gpt-4o-mini-transcribe`), and the text becomes the next turn.
 
 **There is no intent parser, on purpose.** `approve()` and `deny()` were always
 just `send()` with canned English, and the thing receiving it is an LLM. So
@@ -80,13 +80,13 @@ npm start            # build the renderer, then run
 
 Hit `+` to pick a folder and start an agent in it. Click the pill to expand.
 
-Voice replies need a Groq key. Either export it:
+Voice replies need an OpenAI key. Either export it:
 
 ```bash
-export GROQ_API_KEY=gsk_...
+export OPENAI_API_KEY=sk-...
 ```
 
-or press `⌥Space` once and paste it into the prompt — it is stored encrypted by
+or press `F13` once and paste it into the prompt — it is stored encrypted by
 your OS keychain via Electron's `safeStorage`, not in a dotfile.
 
 ## Checks
@@ -101,7 +101,7 @@ ordering, and the silence gate.
 
 ```bash
 node smoke.js         # drives the real `claude` binary through two turns
-node smoke-voice.js   # says a line, then round-trips `say` → webm → Groq → text
+node smoke-voice.js   # says a line, then round-trips `say` → webm → OpenAI → text
 ```
 
 The live checks exist because unit tests can't catch the CLI changing its
@@ -117,7 +117,7 @@ src/helpers/                main process
   windowConfig.js           pill geometry, always-on-top, work-area clamping
   speak.js                  serial TTS queue over `say`
   voice.js                  hotkey, mic permission, target routing
-  transcribe.js             Groq BYOK
+  transcribe.js             OpenAI BYOK (Groq is a 4-line swap)
   secrets.js                safeStorage-backed key storage
   ipc.js                    every ipcMain handler
 src/renderer/               React + Vite + Tailwind

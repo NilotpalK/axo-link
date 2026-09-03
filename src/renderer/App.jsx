@@ -122,7 +122,7 @@ export default function App() {
             onSave={async (key) => {
               if (await axo.setKey(key)) {
                 setNeedKey(false);
-                flash('Key saved — press ⌥Space to talk.');
+                flash('Key saved — press F13 to talk.');
               }
             }}
             onDismiss={() => setNeedKey(false)}

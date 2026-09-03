@@ -3,7 +3,10 @@
 const { globalShortcut, systemPreferences, ipcMain } = require('electron');
 const { transcribe, readKey, saveKey } = require('./transcribe');
 
-const HOTKEY = 'Alt+Space';
+// F13 rather than a chord: nothing else claims it, so there is no input-method
+// or Spotlight clash to debug. Keyboards without one usually get it by remapping
+// caps lock in Karabiner, which is the common dictation setup anyway.
+const HOTKEY = 'F13';
 
 function registerVoice({ sessions, speaker, getWindow }) {
   let selectedId = null;
