@@ -1,14 +1,28 @@
 {
   "name": "axo-link",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
-  "description": "Always-on-top pill that tells you when an agent is waiting on you.",
+  "description": "Always-on-top pill that tells you out loud when an agent is waiting on you.",
   "main": "main.js",
   "scripts": {
-    "start": "electron .",
-    "test": "node --test"
+    "dev": "concurrently -k -r \"vite\" \"cross-env NODE_ENV=development electron .\"",
+    "start": "npm run build:renderer && electron .",
+    "build:renderer": "vite build",
+    "build": "npm run build:renderer && electron-builder",
+    "build:mac": "npm run build:renderer && electron-builder --mac",
+    "test": "node --test",
+    "smoke": "node smoke.js"
   },
   "devDependencies": {
-    "electron": "^44.0.0"
+    "@tailwindcss/vite": "^4.1.10",
+    "@vitejs/plugin-react": "^5.0.0",
+    "concurrently": "^9.1.2",
+    "cross-env": "^10.0.0",
+    "electron": "^44.0.0",
+    "electron-builder": "^26.0.0",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "tailwindcss": "^4.1.10",
+    "vite": "^7.0.0"
   }
 }

@@ -3,7 +3,7 @@
 // process survive to take a second turn? agent.test.js proves the parsing with
 // a fake; this proves the CLI still behaves the way the parser assumes.
 //   node smoke.js
-const { Sessions } = require('./agent');
+const { Sessions } = require('./src/helpers/agent');
 
 const s = new Sessions();
 const t0 = Date.now();

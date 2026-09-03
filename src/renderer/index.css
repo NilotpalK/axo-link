@@ -1,0 +1,52 @@
+@import "tailwindcss";
+
+@theme {
+  --color-state-running: #4ade80;
+  --color-state-waiting: #fbbf24;
+  --color-state-error: #f87171;
+  --color-state-idle: #64748b;
+  --color-state-listening: #fb7185;
+
+  --color-pill-surface: rgba(18, 18, 22, 0.82);
+  --color-pill-border: rgba(255, 255, 255, 0.1);
+  --color-pill-text: #e7e7ea;
+  --color-pill-dim: #8b8b96;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  font: 12px/1.45 system-ui, "Segoe UI", sans-serif;
+  color: var(--color-pill-text);
+  /* The window is transparent; the shell paints the only opaque surface. */
+  background: transparent;
+  overflow: hidden;
+  user-select: none;
+}
+
+.drag {
+  -webkit-app-region: drag;
+}
+.no-drag {
+  -webkit-app-region: no-drag;
+}
+
+@keyframes pill-pulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.45;
+    transform: scale(0.8);
+  }
+}
+.animate-pill-pulse {
+  animation: pill-pulse 1.2s ease-in-out infinite;
+}

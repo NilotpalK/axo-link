@@ -1,36 +1,36 @@
 'use strict';
-const { app, BrowserWindow, ipcMain, Notification, dialog, screen } = require('electron');
 const path = require('node:path');
-const { Sessions } = require('./agent');
+const { app, globalShortcut, Notification } = require('electron');
+const { Sessions } = require('./src/helpers/agent');
+const { createPillWindow } = require('./src/helpers/windowConfig');
+const { registerIpc } = require('./src/helpers/ipc');
+const { createSpeaker, line } = require('./src/helpers/speak');
+const { registerVoice } = require('./src/helpers/voice');
 
-const COLLAPSED = { width: 232, height: 46 };
-const EXPANDED = { width: 420, height: 500 };
+// Keep in sync with DEV_SERVER_PORT in vite.config.mjs.
+const DEV_SERVER_URL = 'http://127.0.0.1:5273';
 
 const sessions = new Sessions();
+const speaker = createSpeaker();
 let win;
 
 function createWindow() {
-  win = new BrowserWindow({
-    ...COLLAPSED,
-    frame: false,
-    transparent: true,
-    alwaysOnTop: true,
-    skipTaskbar: true,      // no taskbar entry, per the handoff doc
-    resizable: false,
-    maximizable: false,
-    hasShadow: false,
-    webPreferences: { preload: path.join(__dirname, 'preload.js') },
-  });
-  win.setAlwaysOnTop(true, 'screen-saver');   // above fullscreen apps too
-  win.loadFile('pill.html');
-
-  const { workArea } = screen.getPrimaryDisplay();
-  win.setPosition(workArea.x + workArea.width - COLLAPSED.width - 24, workArea.y + 24);
+  win = createPillWindow();
+  if (process.env.NODE_ENV === 'development') {
+    win.loadURL(DEV_SERVER_URL);
+  } else {
+    win.loadFile(path.join(__dirname, 'dist', 'renderer', 'index.html'));
+  }
 }
 
 app.setAppUserModelId('com.axolink.pill');   // Windows: notifications are silent without this
-app.whenReady().then(createWindow);
+app.whenReady().then(() => {
+  createWindow();
+  registerIpc({ sessions, getWindow: () => win });
+  registerVoice({ sessions, speaker, getWindow: () => win });
+});
 app.on('window-all-closed', () => app.quit());
+app.on('will-quit', () => globalShortcut.unregisterAll());
 
 sessions.on('update', (list) => win?.webContents.send('sessions', list));
 
@@ -41,27 +41,12 @@ sessions.on('waiting', (s) => {
     approval && s.pending?.[0] && `wants: ${s.pending[0]}`,
     s.did && `did: ${s.did}`,
     s.summary,
-  ].filter(Boolean).join(' \u2014 ');
+  ].filter(Boolean).join(' — ');
   new Notification({
     title: approval ? `${s.label} needs approval` : `${s.label} is waiting on you`,
     body: body.slice(0, 220) || 'waiting on you',
   }).show();
-});
-
-ipcMain.handle('list', () => sessions.list());
-ipcMain.handle('send', (_e, id, text) => sessions.send(id, text));
-ipcMain.handle('approve', (_e, id) => sessions.approve(id));
-ipcMain.handle('deny', (_e, id) => sessions.deny(id));
-ipcMain.handle('stop', (_e, id) => sessions.stop(id));
-ipcMain.handle('pick', async () => {
-  const r = await dialog.showOpenDialog(win, { properties: ['openDirectory'] });
-  if (r.canceled || !r.filePaths[0]) return null;
-  const cwd = r.filePaths[0];
-  return sessions.start({ vendor: 'claude', cwd, label: path.basename(cwd) });
-});
-ipcMain.on('resize', (_e, expanded) => {
-  const b = win.getBounds();
-  const s = expanded ? EXPANDED : COLLAPSED;
-  // grow down-and-left so the pill's top-right corner never moves
-  win.setBounds({ x: b.x + b.width - s.width, y: b.y, ...s });
+  // The notification is the record you can scroll back to; this is the part
+  // that reaches you when you are not looking at the screen.
+  speaker.speak(line(s), s.id);
 });
