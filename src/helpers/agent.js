@@ -164,6 +164,19 @@ class Sessions extends EventEmitter {
 
   stop(id) { this.#procs.get(id)?.child.kill(); }
 
+  /** Upsert an external (non-CLI) session record — e.g. a Layer hub whisper. */
+  upsertExternal(rec) {
+    if (!rec?.id) throw new Error('upsertExternal: id required');
+    this.#set(rec.id, rec);
+    return this.#state.get(rec.id);
+  }
+
+  isHub(id) {
+    const s = this.#state.get(id);
+    return Boolean(s && (s.hub || s.vendor === 'layer-hub'));
+  }
+
+
   #set(id, patch) {
     const prev = this.#state.get(id) || {};
     const next = { ...prev, ...patch };
