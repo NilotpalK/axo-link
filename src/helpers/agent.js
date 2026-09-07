@@ -164,6 +164,25 @@ class Sessions extends EventEmitter {
 
   stop(id) { this.#procs.get(id)?.child.kill(); }
 
+  /** Upsert an external (non-CLI) session record — e.g. a Layer hub whisper. */
+  upsertExternal(rec) {
+    if (!rec?.id) throw new Error('upsertExternal: id required');
+    this.#set(rec.id, rec);
+    return this.#state.get(rec.id);
+  }
+
+  isHub(id) {
+    const s = this.#state.get(id);
+    return Boolean(s && (s.hub || s.vendor === 'layer-hub'));
+  }
+
+  /** Soft-dismiss from the focused card without sending a turn. */
+  hold(id) {
+    if (!this.#state.get(id)) return false;
+    this.#set(id, { held: true });
+    return true;
+  }
+
   #set(id, patch) {
     const prev = this.#state.get(id) || {};
     const next = { ...prev, ...patch };

@@ -12,7 +12,7 @@ export function Dot({ state }) {
 }
 
 /** The collapsed bar. Three moods: idle roster, listening, transcribing. */
-export default function Pill({ sorted, waitingCount, notice, mic, onToggle, onAdd }) {
+export default function Pill({ sorted, waitingCount, notice, mic, onToggle, onAdd, onSetup }) {
   const listening = mic.status === 'recording';
   const sending = mic.status === 'sending';
   // Past 8 the dots stop being readable, so collapse them into the count.
@@ -52,6 +52,19 @@ export default function Pill({ sorted, waitingCount, notice, mic, onToggle, onAd
             ) : null}
           </span>
         </>
+      )}
+
+      {onSetup && (
+        <button
+          className="no-drag size-5.5 flex-none cursor-pointer rounded-full border border-pill-border text-[11px] leading-none text-pill-dim transition-colors hover:border-pill-dim hover:text-pill-text"
+          title="Setup / sign-in"
+          onClick={(e) => {
+            e.stopPropagation();
+            onSetup();
+          }}
+        >
+          ⚙
+        </button>
       )}
 
       <button

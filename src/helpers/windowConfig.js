@@ -8,6 +8,7 @@ const { BrowserWindow, screen } = require('electron');
 
 const SIZES = {
   collapsed: { width: 232, height: 46 },
+  focused: { width: 360, height: 360 },
   expanded: { width: 420, height: 500 },
 };
 const MARGIN = 24;
@@ -79,10 +80,17 @@ function createPillWindow() {
   return win;
 }
 
-/** Grow down-and-left so the pill's top-right corner never moves. */
-function resizePill(win, expanded) {
+function resolveSize(mode) {
+  if (mode === true || mode === 'expanded') return SIZES.expanded;
+  if (mode === 'focused') return SIZES.focused;
+  return SIZES.collapsed;
+}
+
+/** Grow down-and-left so the pill's top-right corner never moves.
+ *  mode: true/'expanded' | 'focused' | false/'collapsed' */
+function resizePill(win, mode) {
   const b = win.getBounds();
-  const size = expanded ? SIZES.expanded : SIZES.collapsed;
+  const size = resolveSize(mode);
   const display = screen.getDisplayMatching(b);
   win.setBounds(clampToWorkArea(
     { x: b.x + b.width - size.width, y: b.y, ...size },

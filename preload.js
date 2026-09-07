@@ -13,8 +13,10 @@ contextBridge.exposeInMainWorld('axo', {
   send: (id, text) => ipcRenderer.invoke('send', id, text),
   approve: (id) => ipcRenderer.invoke('approve', id),
   deny: (id) => ipcRenderer.invoke('deny', id),
+  hold: (id) => ipcRenderer.invoke('hold', id),
   stop: (id) => ipcRenderer.invoke('stop', id),
-  resize: (expanded) => ipcRenderer.send('resize', expanded),
+  openLink: (url) => ipcRenderer.invoke('open-link', url),
+  resize: (mode) => ipcRenderer.send('resize', mode),
 
   // --- voice ---
   select: (id) => ipcRenderer.send('select', id),
@@ -26,4 +28,11 @@ contextBridge.exposeInMainWorld('axo', {
   voice: (targetId, audio) => ipcRenderer.invoke('voice', targetId, audio),
   hasKey: () => ipcRenderer.invoke('has-key'),
   setKey: (key) => ipcRenderer.invoke('set-key', key),
+
+  // --- provider sign-in scaffold ---
+  providersList: () => ipcRenderer.invoke('providers:list'),
+  providersConnect: (id) => ipcRenderer.invoke('providers:connect', id),
+  providersDisconnect: (id) => ipcRenderer.invoke('providers:disconnect', id),
+  providersRefresh: (opts) => ipcRenderer.invoke('providers:refresh', opts),
+  providersMarkSetupSeen: () => ipcRenderer.invoke('providers:mark-setup-seen'),
 });
