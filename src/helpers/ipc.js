@@ -86,6 +86,34 @@ function registerIpc({ sessions, getWindow }) {
     const win = getWindow();
     if (win && !win.isDestroyed()) resizePill(win, mode);
   });
+
+  // --- provider sign-in scaffold (state only; secrets stay in env/keychain) ---
+  ipcMain.handle('providers:list', async () => {
+    const providers = require('./providers');
+    try {
+      await providers.refresh();
+    } catch (e) {
+      console.warn('[providers] refresh failed:', e.message || e);
+    }
+    return providers.snapshot();
+  });
+  ipcMain.handle('providers:connect', async (_e, id) => {
+    const providers = require('./providers');
+    return providers.connect(id);
+  });
+  ipcMain.handle('providers:disconnect', async (_e, id) => {
+    const providers = require('./providers');
+    return providers.disconnect(id);
+  });
+  ipcMain.handle('providers:refresh', async (_e, opts) => {
+    const providers = require('./providers');
+    await providers.refresh(opts || {});
+    return providers.snapshot();
+  });
+  ipcMain.handle('providers:mark-setup-seen', () => {
+    const providers = require('./providers');
+    return providers.markSetupSeen();
+  });
 }
 
 module.exports = { registerIpc };

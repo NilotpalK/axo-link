@@ -28,4 +28,11 @@ contextBridge.exposeInMainWorld('axo', {
   voice: (targetId, audio) => ipcRenderer.invoke('voice', targetId, audio),
   hasKey: () => ipcRenderer.invoke('has-key'),
   setKey: (key) => ipcRenderer.invoke('set-key', key),
+
+  // --- provider sign-in scaffold ---
+  providersList: () => ipcRenderer.invoke('providers:list'),
+  providersConnect: (id) => ipcRenderer.invoke('providers:connect', id),
+  providersDisconnect: (id) => ipcRenderer.invoke('providers:disconnect', id),
+  providersRefresh: (opts) => ipcRenderer.invoke('providers:refresh', opts),
+  providersMarkSetupSeen: () => ipcRenderer.invoke('providers:mark-setup-seen'),
 });

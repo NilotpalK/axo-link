@@ -113,6 +113,27 @@ fields: `summary = text`, `waiting_kind = question` if urgent/interrupt else
 `finished`, `did` left empty. Hub rows also carry `tools` / `character` / optional `deepLink` for the focused card. Staff-inbox / spawn-agent / gemini-token are left
 alone for now.
 
+
+## Setup / sign-in
+
+After the DMG install, open the pill and hit the gear to reach **Setup** — a
+seat list for the agents/chats the pill can talk to. First run opens it once
+automatically.
+
+| Seat | How "connected" is decided today |
+|---|---|
+| Claude (CLI + Anthropic) | `claude` on PATH; best-effort `claude auth status` |
+| ChatGPT / OpenAI | `OPENAI_API_KEY` or the existing keychain entry used for STT |
+| Grok / xAI / Grok Bot | `XAI_API_KEY` / keychain placeholder — **TODO(sso)** |
+| Codex | `codex` on PATH — **TODO(sso)** |
+| Hermes | Manual seat — **TODO(sso)** |
+| Layer hub | `LAYER_HUB_URL` (or the default hub) + optional health ping |
+
+Connection **state** is a small JSON file under Electron `userData`
+(`provider-connections.json`). Tokens stay in env or `safeStorage` — this PR
+does **not** invent browser OAuth for ChatGPT/Claude accounts. Connect on a
+seat without a local signal marks it `pending` with a clear SSO TODO.
+
 ## Focused card
 
 When a seat needs Asher (local CLI waiting, or a hub whisper), the pill grows into a light focused card — LayerProto concepts on the existing React shell, no fake chrome:
@@ -133,7 +154,7 @@ npm test
 
 tests: turn settling, the `did` tally, `waiting_kind` classification,
 approve-continues-the-session, crash surfacing, the spoken line, speak-queue
-ordering, the silence gate, and Layer hub whisper→pill mapping, focused-seat helpers.
+ordering, the silence gate, Layer hub whisper→pill mapping, focused-seat helpers, and provider connection-state reducer.
 
 ```bash
 node smoke.js         # drives the real `claude` binary through two turns
@@ -155,9 +176,11 @@ src/helpers/                main process
   voice.js                  hotkey, mic permission, target routing
   transcribe.js             OpenAI BYOK (Groq is a 4-line swap)
   secrets.js                safeStorage-backed key storage
+  provider-state.js         provider catalog + connection reducer
+  providers.js              local detection + userData JSON persist
   ipc.js                    every ipcMain handler
 src/renderer/               React + Vite + Tailwind
-  App.jsx, components/ (Pill, Roster, FocusedCard, …), hooks/useMic.js, utils/
+  App.jsx, components/ (Pill, Roster, FocusedCard, SetupPanel, …), hooks/useMic.js, utils/
 resources/mac/              entitlements
 test/, smoke.js, smoke-voice.js
 ```

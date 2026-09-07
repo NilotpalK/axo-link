@@ -3,6 +3,7 @@ import Pill from './components/Pill.jsx';
 import Roster from './components/Roster.jsx';
 import KeyPrompt from './components/KeyPrompt.jsx';
 import FocusedCard from './components/FocusedCard.jsx';
+import SetupPanel from './components/SetupPanel.jsx';
 import { useMic } from './hooks/useMic.js';
 import { needsAsherSeats } from './utils/seat.js';
 
@@ -18,6 +19,10 @@ export default function App() {
   // Local dismiss / decision overlay — Hold is UI-only; Approve/Deny also
   // poke the CLI or hub when possible.
   const [decisions, setDecisions] = useState({});
+  const [showSetup, setShowSetup] = useState(false);
+  const [providers, setProviders] = useState([]);
+  const [setupSeen, setSetupSeen] = useState(true);
+  const [busyProvider, setBusyProvider] = useState(null);
 
   // The session the open mic is aimed at, resolved by main at mic-open so it
   // can't shift while you are mid-sentence.
@@ -42,10 +47,44 @@ export default function App() {
     [],
   );
 
+  const applyProviderSnapshot = useCallback((snap) => {
+    if (!snap) return;
+    setProviders(snap.providers || []);
+    setSetupSeen(Boolean(snap.setupSeen));
+  }, []);
+
+  const loadProviders = useCallback(async () => {
+    if (!axo.providersList) return;
+    try {
+      const snap = await axo.providersList();
+      applyProviderSnapshot(snap);
+      return snap;
+    } catch (e) {
+      flash(e.message || 'Could not load providers');
+      return null;
+    }
+  }, [applyProviderSnapshot, flash]);
+
   useEffect(() => {
     axo.list().then(setList);
     return axo.onSessions(setList);
   }, []);
+
+  // First-run: open setup once when nothing has been marked seen yet.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const snap = await loadProviders();
+      if (cancelled || !snap) return;
+      if (!snap.setupSeen) {
+        setShowSetup(true);
+        setExpanded(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [loadProviders]);
 
   // Drop stale decisions once the session leaves waiting (or disappears).
   useEffect(() => {
@@ -129,12 +168,78 @@ export default function App() {
   const queueWaiting = queue.length;
   const queueOthers = Math.max(list.length - (focusedSeat ? 1 : 0), 0);
 
-  // Window geometry: expanded roster > focused card > collapsed pill.
+  // Window geometry: expanded roster/setup > focused card > collapsed pill.
   useEffect(() => {
-    if (expanded) applyResize('expanded');
+    if (expanded || showSetup) applyResize('expanded');
     else if (focusedSeat) applyResize('focused');
     else applyResize('collapsed');
-  }, [expanded, focusedSeat, applyResize]);
+  }, [expanded, showSetup, focusedSeat, applyResize]);
+
+  const openSetup = useCallback(() => {
+    setShowSetup(true);
+    setExpanded(true);
+    loadProviders();
+  }, [loadProviders]);
+
+  const closeSetup = useCallback(async () => {
+    setShowSetup(false);
+    if (!setupSeen && axo.providersMarkSetupSeen) {
+      const snap = await axo.providersMarkSetupSeen();
+      applyProviderSnapshot(snap);
+    }
+  }, [setupSeen, applyProviderSnapshot]);
+
+  const onProviderConnect = useCallback(
+    async (id) => {
+      setBusyProvider(id);
+      try {
+        const snap = await axo.providersConnect(id);
+        if (!snap?.ok) {
+          flash(snap?.error || 'Connect failed');
+          return;
+        }
+        applyProviderSnapshot(snap);
+        if (snap.action === 'pending') flash('Marked pending — SSO is a TODO');
+        else if (snap.action === 'connected') flash('Connected');
+        // OpenAI without a key: reuse the existing key prompt path.
+        if (id === 'openai' && snap.action === 'pending') setNeedKey(true);
+      } catch (e) {
+        flash(e.message || 'Connect failed');
+      } finally {
+        setBusyProvider(null);
+      }
+    },
+    [applyProviderSnapshot, flash],
+  );
+
+  const onProviderDisconnect = useCallback(
+    async (id) => {
+      setBusyProvider(id);
+      try {
+        const snap = await axo.providersDisconnect(id);
+        if (!snap?.ok) {
+          flash(snap?.error || 'Disconnect failed');
+          return;
+        }
+        applyProviderSnapshot(snap);
+        flash('Disconnected');
+      } catch (e) {
+        flash(e.message || 'Disconnect failed');
+      } finally {
+        setBusyProvider(null);
+      }
+    },
+    [applyProviderSnapshot, flash],
+  );
+
+  const onProviderRefresh = useCallback(async () => {
+    try {
+      const snap = await axo.providersRefresh?.({ force: false });
+      applyProviderSnapshot(snap);
+    } catch (e) {
+      flash(e.message || 'Refresh failed');
+    }
+  }, [applyProviderSnapshot, flash]);
 
   const onApprove = useCallback(
     async (seat) => {
@@ -202,20 +307,29 @@ export default function App() {
     targetLabel: targetRef.current?.targetLabel || '',
   };
 
-  const showCard = Boolean(focusedSeat);
+  const showCard = Boolean(focusedSeat) && !showSetup;
+  const shellOpen = expanded || showSetup || showCard;
 
   return (
     <div
       className={`flex h-screen flex-col overflow-hidden border bg-pill-surface backdrop-blur-lg ${
         micStatus === 'recording' ? 'border-state-listening/60' : 'border-pill-border'
-      } ${expanded || showCard ? 'rounded-[22px]' : 'rounded-full'}`}
+      } ${shellOpen ? 'rounded-[22px]' : 'rounded-full'}`}
     >
       <Pill
         sorted={sorted}
         waitingCount={waitingCount}
         notice={notice}
         mic={mic}
-        onToggle={() => resize(!expanded)}
+        onToggle={() => {
+          if (showSetup) {
+            closeSetup();
+            setExpanded(false);
+            return;
+          }
+          resize(!expanded);
+        }}
+        onSetup={openSetup}
         onAdd={async () => {
           const id = await axo.pick();
           if (id) {
@@ -241,13 +355,24 @@ export default function App() {
         />
       )}
 
-      {expanded &&
+      {showSetup ? (
+        <SetupPanel
+          providers={providers}
+          busyId={busyProvider}
+          onConnect={onProviderConnect}
+          onDisconnect={onProviderDisconnect}
+          onRefresh={onProviderRefresh}
+          onDone={closeSetup}
+        />
+      ) : (
+        expanded &&
         (needKey ? (
           <KeyPrompt
             onSave={async (key) => {
               if (await axo.setKey(key)) {
                 setNeedKey(false);
                 flash('Key saved — press F13 to talk.');
+                loadProviders();
               }
             }}
             onDismiss={() => setNeedKey(false)}
@@ -262,7 +387,8 @@ export default function App() {
             sel={sel}
             setSel={select}
           />
-        ))}
+        ))
+      )}
     </div>
   );
 }
