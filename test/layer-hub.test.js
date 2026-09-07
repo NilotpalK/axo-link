@@ -74,3 +74,25 @@ test('Sessions.upsertExternal emits waiting so the pill / speak path fires', asy
   assert.equal(s.isHub('hub-1'), true);
   assert.equal(s.list().length, 1);
 });
+
+test('mapWhisperToPill: deepLink, tools, character pass through', () => {
+  const pill = mapWhisperToPill({
+    id: 'w2',
+    agent: 'Coding',
+    text: 'Diff ready for review.',
+    deepLink: 'https://example.test/pr/1',
+    tools: ['Edit', 'Bash'],
+    character: 'CD',
+  });
+  assert.equal(pill.deepLink, 'https://example.test/pr/1');
+  assert.deepEqual(pill.tools, ['Edit', 'Bash']);
+  assert.equal(pill.character, 'CD');
+  assert.equal(pill.summary, 'Diff ready for review.');
+});
+
+test('mapWhisperToPill: empty text still maps but focused card will skip', () => {
+  const pill = mapWhisperToPill({ id: 'empty', agent: 'Voss', text: '  ' });
+  assert.equal(pill.summary, '');
+  assert.equal(pill.character, 'VO');
+  assert.deepEqual(pill.tools, ['Layer']);
+});

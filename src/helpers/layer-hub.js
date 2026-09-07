@@ -18,21 +18,40 @@ function enabled() {
   return Boolean(hubUrl());
 }
 
+function initials(value) {
+  const parts = String(value || '').trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return 'LY';
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return `${parts[0][0]}${parts[parts.length - 1][0]}`.toUpperCase();
+}
+
 /** Map a hub whisper into the pill's session fields (did / summary / waiting_kind). */
 function mapWhisperToPill(whisper = {}) {
   const urgent = Boolean(whisper.urgent ?? whisper.interrupt);
   const text = String(whisper.text || '').trim();
+  const label = String(whisper.agent || 'hub').trim() || 'hub';
+  const tools = Array.isArray(whisper.tools)
+    ? whisper.tools.filter((t) => typeof t === 'string' && t.trim())
+    : [];
+  const deepLinkRaw = whisper.deepLink ?? whisper.deep_link;
+  const deepLink =
+    typeof deepLinkRaw === 'string' && deepLinkRaw.trim()
+      ? deepLinkRaw.trim()
+      : undefined;
   return {
     id: whisper.id || `hub-${Date.now()}`,
     vendor: 'layer-hub',
     cwd: '',
-    label: String(whisper.agent || 'hub').trim() || 'hub',
+    label,
+    character: String(whisper.character || '').trim() || initials(label),
+    tools: tools.length ? tools : ['Layer'],
     state: 'waiting',
     waiting_kind: urgent ? 'question' : 'finished',
     summary: text,
     did: '',
     pending: [],
     last: text,
+    deepLink,
     hub: true,
   };
 }

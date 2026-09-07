@@ -176,6 +176,12 @@ class Sessions extends EventEmitter {
     return Boolean(s && (s.hub || s.vendor === 'layer-hub'));
   }
 
+  /** Soft-dismiss from the focused card without sending a turn. */
+  hold(id) {
+    if (!this.#state.get(id)) return false;
+    this.#set(id, { held: true });
+    return true;
+  }
 
   #set(id, patch) {
     const prev = this.#state.get(id) || {};

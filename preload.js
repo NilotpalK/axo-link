@@ -13,8 +13,10 @@ contextBridge.exposeInMainWorld('axo', {
   send: (id, text) => ipcRenderer.invoke('send', id, text),
   approve: (id) => ipcRenderer.invoke('approve', id),
   deny: (id) => ipcRenderer.invoke('deny', id),
+  hold: (id) => ipcRenderer.invoke('hold', id),
   stop: (id) => ipcRenderer.invoke('stop', id),
-  resize: (expanded) => ipcRenderer.send('resize', expanded),
+  openLink: (url) => ipcRenderer.invoke('open-link', url),
+  resize: (mode) => ipcRenderer.send('resize', mode),
 
   // --- voice ---
   select: (id) => ipcRenderer.send('select', id),

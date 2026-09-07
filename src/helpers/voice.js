@@ -20,7 +20,7 @@ function registerVoice({ sessions, speaker, getWindow }) {
     const list = sessions.list();
     const spoken = list.find((s) => s.id === speaker.lastId);
     if (spoken) return spoken;
-    const waiting = list.filter((s) => s.state === 'waiting');
+    const waiting = list.filter((s) => s.state === 'waiting' && !s.held);
     if (waiting.length === 1) return waiting[0];
     return list.find((s) => s.id === selectedId) || null;
   };
