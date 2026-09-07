@@ -6,6 +6,11 @@ const { createPillWindow } = require('./src/helpers/windowConfig');
 const { registerIpc } = require('./src/helpers/ipc');
 const { createSpeaker, line } = require('./src/helpers/speak');
 const { registerVoice } = require('./src/helpers/voice');
+const {
+  enabled: hubEnabled,
+  mapWhisperToPill,
+  subscribeStream,
+} = require('./src/helpers/layer-hub');
 
 // Keep in sync with DEV_SERVER_PORT in vite.config.mjs.
 const DEV_SERVER_URL = 'http://127.0.0.1:5273';
@@ -13,6 +18,7 @@ const DEV_SERVER_URL = 'http://127.0.0.1:5273';
 const sessions = new Sessions();
 const speaker = createSpeaker();
 let win;
+let hubSub = null;
 
 function createWindow() {
   win = createPillWindow();
@@ -23,14 +29,27 @@ function createWindow() {
   }
 }
 
+function wireLayerHub() {
+  if (!hubEnabled()) return;
+  hubSub = subscribeStream((ev) => {
+    if (!ev || ev.type !== 'agent-whisper' || !ev.whisper) return;
+    // Reuses the same waiting → notify + speak path as local CLI settles.
+    sessions.upsertExternal(mapWhisperToPill(ev.whisper));
+  });
+}
+
 app.setAppUserModelId('com.axolink.pill');   // Windows: notifications are silent without this
 app.whenReady().then(() => {
   createWindow();
   registerIpc({ sessions, getWindow: () => win });
   registerVoice({ sessions, speaker, getWindow: () => win });
+  wireLayerHub();
 });
 app.on('window-all-closed', () => app.quit());
-app.on('will-quit', () => globalShortcut.unregisterAll());
+app.on('will-quit', () => {
+  globalShortcut.unregisterAll();
+  hubSub?.stop();
+});
 
 sessions.on('update', (list) => win?.webContents.send('sessions', list));
 

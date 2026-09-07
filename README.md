@@ -89,15 +89,109 @@ export OPENAI_API_KEY=sk-...
 or press `F13` once and paste it into the prompt — it is stored encrypted by
 your OS keychain via Electron's `safeStorage`, not in a dotfile.
 
+## Download / install (DMG)
+
+The shipping face of this app can show as **Layer** in product copy; the
+Electron `productName` / binary stays **axo-link** (`com.axolink.pill`).
+
+Build a macOS disk image on a Mac (or any host that can run mac packaging):
+
+```bash
+npm install
+npm run build:mac
+```
+
+Artifacts land in `dist/release/`:
+
+- `axo-link-<version>-arm64.dmg` / `axo-link-<version>-x64.dmg`
+- matching `.zip` archives for the same arches
+
+Open the `.dmg`, drag **axo-link** into **Applications**, then launch it.
+
+**First launch (Gatekeeper):** unsigned local builds are blocked until you
+allow them. Right-click the app → **Open** (or System Settings → Privacy &
+Security → Open Anyway). Mic access is requested the first time you press the
+hotkey (`F13`).
+
+**Notarization TODO (Wispr-like distribution):** this PR does **not** require
+Apple Developer certs. For Gatekeeper-clean public downloads you still need:
+
+1. Apple Developer Program membership
+2. Developer ID Application certificate (+ optional Installer cert)
+3. Hardened runtime already enabled + entitlements under `resources/mac/`
+4. A signing identity available to the packager (file-based or keychain)
+5. Apple notarization and stapling via notarytool. Wire that in CI when certs exist.
+   Keep gatekeeper assessment off until signing is real.
+
+
+Renderer-only npm build stays Linux-safe; Apple packaging is opt-in. Full DMG output expects a Mac; Linux may only get as far as zip artifacts.
+
+## Layer hub (optional)
+
+The pill can also talk to a remote Layer hub so
+wearer replies and agent whispers share one room stream — without replacing the
+local CLI watcher.
+
+Default hub: `https://temporary-sonic-silver-10hrsnu.vercel.app`
+
+| Direction | Endpoint | When |
+|---|---|---|
+| Wearer → hub | `POST /api/turn` `{ text }` | Typed or spoken reply (also still goes to the local CLI when one is selected) |
+| Hub → pill | `GET /api/room/stream` (SSE) | `agent-whisper` events surface as waiting rows and are spoken |
+| Agent → hub | `POST /api/whispers` `{ agent, text, urgent? }` | Available on the helper; not wired from the CLI yet |
+
+```bash
+export LAYER_HUB_URL=https://temporary-sonic-silver-10hrsnu.vercel.app   # default
+export LAYER_HUB_URL=                                                     # disable
+```
+
+`src/helpers/layer-hub.js` owns the client. Whispers map lightly onto pill
+fields: `summary = text`, `waiting_kind = question` if urgent/interrupt else
+`finished`, `did` left empty. Hub rows also carry `tools` / `character` / optional `deepLink` for the focused card. Staff-inbox / spawn-agent / gemini-token are left
+alone for now.
+
+
+## Setup / sign-in
+
+After the DMG install, open the pill and hit the gear to reach **Setup** — a
+seat list for the agents/chats the pill can talk to. First run opens it once
+automatically.
+
+| Seat | How "connected" is decided today |
+|---|---|
+| Claude (CLI + Anthropic) | `claude` on PATH; best-effort `claude auth status` |
+| ChatGPT / OpenAI | `OPENAI_API_KEY` or the existing keychain entry used for STT |
+| Grok / xAI / Grok Bot | `XAI_API_KEY` / keychain placeholder — **TODO(sso)** |
+| Codex | `codex` on PATH — **TODO(sso)** |
+| Hermes | Manual seat — **TODO(sso)** |
+| Layer hub | `LAYER_HUB_URL` (or the default hub) + optional health ping |
+
+Connection **state** is a small JSON file under Electron `userData`
+(`provider-connections.json`). Tokens stay in env or `safeStorage` — this PR
+does **not** invent browser OAuth for ChatGPT/Claude accounts. Connect on a
+seat without a local signal marks it `pending` with a clear SSO TODO.
+
+## Focused card
+
+When a seat needs Asher (local CLI waiting, or a hub whisper), the pill grows into a light focused card — LayerProto concepts on the existing React shell, no fake chrome:
+
+- `FOCUSED · 1 OF N` + hold all
+- Initials, seat name, tool tags, `WAITING|RUNNING|DONE`
+- Snippet = actual text (rows without text stay off the card)
+- Approve / Deny / Reply / Hold / Open
+- Queue line (`N others · M waiting`)
+
+Reply opens the existing mic path aimed at that seat. Approve/Deny hit the CLI when there is one, or POST a short hub turn and dismiss for hub sessions. Hold is local dismiss (hub rows leave the waiting queue). Open uses `deepLink` when present.
+
 ## Checks
 
 ```bash
 npm test
 ```
 
-23 tests: turn settling, the `did` tally, `waiting_kind` classification,
+tests: turn settling, the `did` tally, `waiting_kind` classification,
 approve-continues-the-session, crash surfacing, the spoken line, speak-queue
-ordering, and the silence gate.
+ordering, the silence gate, Layer hub whisper→pill mapping, focused-seat helpers, and provider connection-state reducer.
 
 ```bash
 node smoke.js         # drives the real `claude` binary through two turns
@@ -119,10 +213,13 @@ src/helpers/                main process
   voice.js                  hotkey, mic permission, target routing
   transcribe.js             OpenAI BYOK (Groq is a 4-line swap)
   secrets.js                safeStorage-backed key storage
+  provider-state.js         provider catalog + connection reducer
+  providers.js              local detection + userData JSON persist
   ipc.js                    every ipcMain handler
 src/renderer/               React + Vite + Tailwind
-  App.jsx, components/, hooks/useMic.js, utils/
-resources/mac/              entitlements
+  App.jsx, components/ (Pill, Roster, FocusedCard, SetupPanel, …), hooks/useMic.js, utils/
+resources/mac/              entitlements (hardened runtime)
+electron-builder.json         mac DMG/zip packaging
 test/, smoke.js, smoke-voice.js
 ```
 

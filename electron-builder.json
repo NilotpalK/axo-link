@@ -1,7 +1,11 @@
 {
   "appId": "com.axolink.pill",
   "productName": "axo-link",
-  "directories": { "output": "dist/release" },
+  "copyright": "Copyright © axo-link contributors",
+  "directories": {
+    "output": "dist/release",
+    "buildResources": "resources"
+  },
   "files": [
     "main.js",
     "preload.js",
@@ -10,13 +14,35 @@
     "package.json"
   ],
   "mac": {
-    "target": ["dmg", "zip"],
+    "target": [
+      {
+        "target": "dmg",
+        "arch": ["x64", "arm64"]
+      },
+      {
+        "target": "zip",
+        "arch": ["x64", "arm64"]
+      }
+    ],
     "category": "public.app-category.developer-tools",
     "hardenedRuntime": true,
+    "gatekeeperAssess": false,
     "entitlements": "resources/mac/entitlements.mac.plist",
     "entitlementsInherit": "resources/mac/entitlements.mac.plist",
     "extendInfo": {
       "NSMicrophoneUsageDescription": "axo-link opens the microphone when you press its hotkey, so you can answer an agent by voice."
+    },
+    "artifactName": "${productName}-${version}-${arch}.${ext}"
+  },
+  "dmg": {
+    "title": "${productName} ${version}",
+    "contents": [
+      { "x": 130, "y": 220 },
+      { "x": 410, "y": 220, "type": "link", "path": "/Applications" }
+    ],
+    "window": {
+      "width": 540,
+      "height": 380
     }
   }
 }
