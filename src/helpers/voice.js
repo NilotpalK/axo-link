@@ -2,6 +2,7 @@
 // The listen half: a hotkey opens the mic, the transcript becomes the next turn.
 const { globalShortcut, systemPreferences, ipcMain } = require('electron');
 const { transcribe, readKey, saveKey } = require('./transcribe');
+const { postTurn } = require('./layer-hub');
 
 // F13 rather than a chord: nothing else claims it, so there is no input-method
 // or Spotlight clash to debug. Keyboards without one usually get it by remapping
@@ -37,10 +38,26 @@ function registerVoice({ sessions, speaker, getWindow }) {
       // ponytail: no intent parsing. approve()/deny() in agent.js are already
       // just send() with canned English, and the receiver is an LLM -- "yeah go
       // ahead" and "no, use redis instead" are both simply the next turn.
-      if (!sessions.send(targetId, text)) {
-        return { ok: false, error: 'That session is gone.', text };
+      const local = sessions.send(targetId, text);
+      // ALSO forward wearer turns to the Layer hub when configured.
+      let hubOk = false;
+      try {
+        const hub = await postTurn(text);
+        hubOk = Boolean(hub.ok);
+      } catch (e) {
+        console.warn('[layer-hub] postTurn failed:', e.message || e);
       }
-      return { ok: true, text };
+      if (local) return { ok: true, text };
+      if (sessions.isHub(targetId) && hubOk) {
+        const prev = sessions.list().find((s) => s.id === targetId);
+        if (prev) {
+          sessions.upsertExternal({
+            ...prev, state: 'idle', waiting_kind: null, last: text,
+          });
+        }
+        return { ok: true, text };
+      }
+      return { ok: false, error: 'That session is gone.', text };
     } catch (e) {
       return { ok: false, error: e.message, code: e.code };
     }

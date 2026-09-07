@@ -89,15 +89,39 @@ export OPENAI_API_KEY=sk-...
 or press `F13` once and paste it into the prompt — it is stored encrypted by
 your OS keychain via Electron's `safeStorage`, not in a dotfile.
 
+## Layer hub (optional)
+
+The pill can also talk to a remote Layer hub so
+wearer replies and agent whispers share one room stream — without replacing the
+local CLI watcher.
+
+Default hub: `https://temporary-sonic-silver-10hrsnu.vercel.app`
+
+| Direction | Endpoint | When |
+|---|---|---|
+| Wearer → hub | `POST /api/turn` `{ text }` | Typed or spoken reply (also still goes to the local CLI when one is selected) |
+| Hub → pill | `GET /api/room/stream` (SSE) | `agent-whisper` events surface as waiting rows and are spoken |
+| Agent → hub | `POST /api/whispers` `{ agent, text, urgent? }` | Available on the helper; not wired from the CLI yet |
+
+```bash
+export LAYER_HUB_URL=https://temporary-sonic-silver-10hrsnu.vercel.app   # default
+export LAYER_HUB_URL=                                                     # disable
+```
+
+`src/helpers/layer-hub.js` owns the client. Whispers map lightly onto pill
+fields: `summary = text`, `waiting_kind = question` if urgent/interrupt else
+`finished`, `did` left empty. Staff-inbox / spawn-agent / gemini-token are left
+alone for now.
+
 ## Checks
 
 ```bash
 npm test
 ```
 
-23 tests: turn settling, the `did` tally, `waiting_kind` classification,
+tests: turn settling, the `did` tally, `waiting_kind` classification,
 approve-continues-the-session, crash surfacing, the spoken line, speak-queue
-ordering, and the silence gate.
+ordering, the silence gate, and Layer hub whisper→pill mapping.
 
 ```bash
 node smoke.js         # drives the real `claude` binary through two turns
