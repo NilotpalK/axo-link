@@ -89,15 +89,51 @@ export OPENAI_API_KEY=sk-...
 or press `F13` once and paste it into the prompt — it is stored encrypted by
 your OS keychain via Electron's `safeStorage`, not in a dotfile.
 
+## Layer hub (optional)
+
+The pill can also talk to a remote Layer hub so
+wearer replies and agent whispers share one room stream — without replacing the
+local CLI watcher.
+
+Default hub: `https://temporary-sonic-silver-10hrsnu.vercel.app`
+
+| Direction | Endpoint | When |
+|---|---|---|
+| Wearer → hub | `POST /api/turn` `{ text }` | Typed or spoken reply (also still goes to the local CLI when one is selected) |
+| Hub → pill | `GET /api/room/stream` (SSE) | `agent-whisper` events surface as waiting rows and are spoken |
+| Agent → hub | `POST /api/whispers` `{ agent, text, urgent? }` | Available on the helper; not wired from the CLI yet |
+
+```bash
+export LAYER_HUB_URL=https://temporary-sonic-silver-10hrsnu.vercel.app   # default
+export LAYER_HUB_URL=                                                     # disable
+```
+
+`src/helpers/layer-hub.js` owns the client. Whispers map lightly onto pill
+fields: `summary = text`, `waiting_kind = question` if urgent/interrupt else
+`finished`, `did` left empty. Hub rows also carry `tools` / `character` / optional `deepLink` for the focused card. Staff-inbox / spawn-agent / gemini-token are left
+alone for now.
+
+## Focused card
+
+When a seat needs Asher (local CLI waiting, or a hub whisper), the pill grows into a light focused card — LayerProto concepts on the existing React shell, no fake chrome:
+
+- `FOCUSED · 1 OF N` + hold all
+- Initials, seat name, tool tags, `WAITING|RUNNING|DONE`
+- Snippet = actual text (rows without text stay off the card)
+- Approve / Deny / Reply / Hold / Open
+- Queue line (`N others · M waiting`)
+
+Reply opens the existing mic path aimed at that seat. Approve/Deny hit the CLI when there is one, or POST a short hub turn and dismiss for hub sessions. Hold is local dismiss (hub rows leave the waiting queue). Open uses `deepLink` when present.
+
 ## Checks
 
 ```bash
 npm test
 ```
 
-23 tests: turn settling, the `did` tally, `waiting_kind` classification,
+tests: turn settling, the `did` tally, `waiting_kind` classification,
 approve-continues-the-session, crash surfacing, the spoken line, speak-queue
-ordering, and the silence gate.
+ordering, the silence gate, and Layer hub whisper→pill mapping, focused-seat helpers.
 
 ```bash
 node smoke.js         # drives the real `claude` binary through two turns
@@ -121,7 +157,7 @@ src/helpers/                main process
   secrets.js                safeStorage-backed key storage
   ipc.js                    every ipcMain handler
 src/renderer/               React + Vite + Tailwind
-  App.jsx, components/, hooks/useMic.js, utils/
+  App.jsx, components/ (Pill, Roster, FocusedCard, …), hooks/useMic.js, utils/
 resources/mac/              entitlements
 test/, smoke.js, smoke-voice.js
 ```
