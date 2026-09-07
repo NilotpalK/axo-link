@@ -89,6 +89,43 @@ export OPENAI_API_KEY=sk-...
 or press `F13` once and paste it into the prompt — it is stored encrypted by
 your OS keychain via Electron's `safeStorage`, not in a dotfile.
 
+## Download / install (DMG)
+
+The shipping face of this app can show as **Layer** in product copy; the
+Electron `productName` / binary stays **axo-link** (`com.axolink.pill`).
+
+Build a macOS disk image on a Mac (or any host that can run mac packaging):
+
+```bash
+npm install
+npm run build:mac
+```
+
+Artifacts land in `dist/release/`:
+
+- `axo-link-<version>-arm64.dmg` / `axo-link-<version>-x64.dmg`
+- matching `.zip` archives for the same arches
+
+Open the `.dmg`, drag **axo-link** into **Applications**, then launch it.
+
+**First launch (Gatekeeper):** unsigned local builds are blocked until you
+allow them. Right-click the app → **Open** (or System Settings → Privacy &
+Security → Open Anyway). Mic access is requested the first time you press the
+hotkey (`F13`).
+
+**Notarization TODO (Wispr-like distribution):** this PR does **not** require
+Apple Developer certs. For Gatekeeper-clean public downloads you still need:
+
+1. Apple Developer Program membership
+2. Developer ID Application certificate (+ optional Installer cert)
+3. Hardened runtime already enabled + entitlements under `resources/mac/`
+4. A signing identity available to the packager (file-based or keychain)
+5. Apple notarization and stapling via notarytool. Wire that in CI when certs exist.
+   Keep gatekeeper assessment off until signing is real.
+
+
+Renderer-only npm build stays Linux-safe; Apple packaging is opt-in. Full DMG output expects a Mac; Linux may only get as far as zip artifacts.
+
 ## Layer hub (optional)
 
 The pill can also talk to a remote Layer hub so
@@ -181,7 +218,8 @@ src/helpers/                main process
   ipc.js                    every ipcMain handler
 src/renderer/               React + Vite + Tailwind
   App.jsx, components/ (Pill, Roster, FocusedCard, SetupPanel, …), hooks/useMic.js, utils/
-resources/mac/              entitlements
+resources/mac/              entitlements (hardened runtime)
+electron-builder.json         mac DMG/zip packaging
 test/, smoke.js, smoke-voice.js
 ```
 

@@ -8,10 +8,11 @@
     "dev": "concurrently -k -r \"vite\" \"cross-env NODE_ENV=development electron .\"",
     "start": "npm run build:renderer && electron .",
     "build:renderer": "vite build",
-    "build": "npm run build:renderer && electron-builder",
-    "build:mac": "npm run build:renderer && electron-builder --mac",
+    "build": "npm run build:renderer",
+    "build:mac": "npm run build:renderer && electron-builder --mac --config electron-builder.json --publish never",
     "test": "node --test",
-    "smoke": "node smoke.js"
+    "smoke": "node smoke.js",
+    "pack:mac:dir": "npm run build:renderer && electron-builder --mac --dir --config electron-builder.json --publish never"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.1.10",
@@ -24,5 +25,8 @@
     "react-dom": "^19.1.0",
     "tailwindcss": "^4.1.10",
     "vite": "^7.0.0"
+  },
+  "author": {
+    "name": "axo-link contributors"
   }
 }
