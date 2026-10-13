@@ -50,12 +50,44 @@ const VENDORS = {
       '--input-format', 'stream-json',
       '--verbose',                        // required by stream-json output
       '--permission-mode', 'acceptEdits',
+      // anything acceptEdits won't auto-allow comes back to us as a
+      // control_request, and the CLI pauses mid-turn until we answer it
+      '--permission-prompt-tool', 'stdio',
       '--session-id', sid,
     ],
     write: (t) => JSON.stringify({ type: 'user', message: { role: 'user', content: t } }) + '\n',
-    // (line, per-turn scratch) -> state patch, or null for lines we ignore
-    parse: (o, turn) => {
+    answer: (ask, allow, why) => JSON.stringify({
+      type: 'control_response',
+      response: {
+        subtype: 'success',
+        request_id: ask.id,
+        response: allow ? { behavior: 'allow', updatedInput: ask.input } : { behavior: 'deny', message: why },
+      },
+    }) + '\n',
+    // (line, per-turn scratch, write-to-stdin) -> state patch, or null for lines we ignore
+    parse: (o, turn, reply) => {
       if (o.type === 'system' && o.subtype === 'init') return { model: o.model };
+
+      // Mid-turn permission prompt. Shape read out of claude 2.1.296:
+      // {type:'control_request', request_id, request:{subtype:'can_use_tool', tool_name, input, ...}}
+      if (o.type === 'control_request') {
+        const r = o.request || {};
+        if (r.subtype !== 'can_use_tool') {
+          // never leave the CLI blocked on a request we don't handle
+          reply(JSON.stringify({
+            type: 'control_response',
+            response: { subtype: 'error', request_id: o.request_id, error: `unsupported: ${r.subtype}` },
+          }) + '\n');
+          return null;
+        }
+        turn.asks.push({ id: o.request_id, input: r.input, label: `${r.tool_name}(${argPreview(r.input)})` });
+        return asking(turn);
+      }
+      if (o.type === 'control_cancel_request') {
+        if (!turn.asks.some((a) => a.id === o.request_id)) return null;
+        turn.asks = turn.asks.filter((a) => a.id !== o.request_id);
+        return turn.asks.length ? asking(turn) : { state: 'running', waiting_kind: null, pending: [] };
+      }
 
       if (o.type === 'assistant') {
         for (const b of Array.isArray(o.message?.content) ? o.message.content : []) {
@@ -68,17 +100,14 @@ const VENDORS = {
       }
 
       if (o.type === 'result') {
-        // The CLI's own docs call result.permission_denials "the authoritative
-        // record" of what it was blocked from doing. Shape: {tool_name,
-        // tool_input, tool_use_id}.
-        const denied = Array.isArray(o.permission_denials) ? o.permission_denials : [];
+        // approvals are answered mid-turn now, so a settled turn is never
+        // waiting on one -- anything in permission_denials we denied ourselves
         const summary = brief(o.result || turn.text);
+        turn.asks = [];
         return {
           state: o.is_error === true ? 'error' : 'waiting',
-          waiting_kind: denied.length ? 'approval_request'
-            : /\?["')\]]*\s*$/.test(summary) ? 'question'
-            : 'finished',
-          pending: denied.map((d) => `${d.tool_name}(${argPreview(d.tool_input)})`),
+          waiting_kind: /\?["')\]]*\s*$/.test(summary) ? 'question' : 'finished',
+          pending: [],
           summary,
           did: tally(turn.tools),
         };
@@ -88,7 +117,12 @@ const VENDORS = {
   },
 };
 
-const freshTurn = () => ({ tools: [], text: '' });
+const freshTurn = () => ({ tools: [], text: '', asks: [] });
+const asking = (turn) => ({
+  state: 'waiting', waiting_kind: 'approval_request',
+  pending: turn.asks.map((a) => a.label),
+  summary: brief(turn.text), did: tally(turn.tools),
+});
 
 class Sessions extends EventEmitter {
   #procs = new Map();   // id -> { child, vendor, stderr, turn }
@@ -118,26 +152,28 @@ class Sessions extends EventEmitter {
     this.#set(id, {
       id, vendor, cwd,
       label: label || `${vendor} ${id.slice(0, 4)}`,
-      state: 'idle', waiting_kind: null,
+      state: 'idle', waiting_kind: null, alive: true,
       last: '', summary: '', did: '', pending: [],
       since: Date.now(),
     });
 
+    const reply = (l) => child.stdin?.writable && child.stdin.write(l);
     readline.createInterface({ input: child.stdout }).on('line', (line) => {
       let o;
       try { o = JSON.parse(line); } catch { return; }   // partial/non-JSON noise
-      const patch = v.parse(o, proc.turn);
+      const patch = v.parse(o, proc.turn, reply);
       if (patch) this.#set(id, patch);
     });
     child.stderr?.on('data', (d) => { proc.stderr = (proc.stderr + d).slice(-500); });
     child.on('error', (e) => this.#set(id, { state: 'error', last: e.message, summary: e.message }));
     child.on('exit', (code) => {
       this.#procs.delete(id);
-      // a clean exit is just an idle session; a crash should say why
-      if (code) {
+      const gone = { alive: false, waiting_kind: null, pending: [] };
+      // a stop we asked for, or a clean exit, just ends the session; a crash should say why
+      if (code && !proc.stopping) {
         const why = proc.stderr.trim() || `exited ${code}`;
-        this.#set(id, { state: 'error', last: why, summary: brief(why) });
-      } else this.#set(id, { state: 'idle' });
+        this.#set(id, { ...gone, state: 'error', last: why, summary: brief(why) });
+      } else this.#set(id, { ...gone, state: 'exited' });
     });
     return id;
   }
@@ -145,6 +181,8 @@ class Sessions extends EventEmitter {
   send(id, text) {
     const p = this.#procs.get(id);
     if (!p || !p.child.stdin?.writable) return false;
+    // typing back while it waits on approval is "no -- do this instead"
+    if (p.turn.asks.length) return this.#answer(id, false, text);
     p.child.stdin.write(VENDORS[p.vendor].write(text));
     p.turn = freshTurn();
     this.#set(id, {
@@ -154,15 +192,33 @@ class Sessions extends EventEmitter {
     return true;
   }
 
-  // ponytail: post-hoc approval -- the turn has already settled, so "approved"
-  // is just the next turn on the still-open session. Ceiling: the agent reports
-  // and stops rather than pausing mid-work. Upgrade when voice lands:
-  // --permission-prompt-tool pointed at an MCP `approve` tool returning
-  // {"behavior":"allow"}, which blocks the CLI mid-turn until you answer.
-  approve(id) { return this.send(id, 'Approved. Go ahead and do that.'); }
-  deny(id) { return this.send(id, "Denied. Don't do that \u2014 tell me what you'd do instead."); }
+  approve(id) { return this.#answer(id, true); }
+  deny(id) { return this.#answer(id, false, "Denied. Don't do that \u2014 tell me what you'd do instead."); }
 
-  stop(id) { this.#procs.get(id)?.child.kill(); }
+  // ponytail: one answer covers every pending ask (parallel tool calls come in
+  // together). Per-ask approve if mixed allow/deny ever matters.
+  #answer(id, allow, why) {
+    const p = this.#procs.get(id);
+    if (!p?.turn.asks.length || !p.child.stdin?.writable) return false;
+    for (const a of p.turn.asks) p.child.stdin.write(VENDORS[p.vendor].answer(a, allow, why));
+    p.turn.asks = [];
+    this.#set(id, { state: 'running', waiting_kind: null, pending: [] });
+    return true;
+  }
+
+  stop(id) {
+    const p = this.#procs.get(id);
+    if (!p) return false;
+    p.stopping = true;
+    // shell:true puts cmd.exe between us and claude, so kill() would only take
+    // out cmd.exe. taskkill /T takes the whole tree, claude's tool runs included.
+    if (process.platform === 'win32' && p.child.pid) {
+      spawn('taskkill', ['/pid', String(p.child.pid), '/T', '/F'], { stdio: 'ignore' });
+    } else p.child.kill();
+    return true;
+  }
+
+  stopAll() { for (const id of this.#procs.keys()) this.stop(id); }
 
   #set(id, patch) {
     const prev = this.#state.get(id) || {};

@@ -1,13 +1,22 @@
 'use strict';
 const { contextBridge, ipcRenderer } = require('electron');
 
+// the only channels main pushes to the pill
+const EVENTS = new Set(['sessions', 'link', 'voice', 'play', 'flush', 'caption', 'chime', 'settings']);
+
 contextBridge.exposeInMainWorld('axo', {
-  onSessions: (cb) => ipcRenderer.on('sessions', (_e, list) => cb(list)),
+  on: (channel, cb) => EVENTS.has(channel) && ipcRenderer.on(channel, (_e, v) => cb(v)),
   list: () => ipcRenderer.invoke('list'),
   pick: () => ipcRenderer.invoke('pick'),
   send: (id, text) => ipcRenderer.invoke('send', id, text),
   approve: (id) => ipcRenderer.invoke('approve', id),
   deny: (id) => ipcRenderer.invoke('deny', id),
   stop: (id) => ipcRenderer.invoke('stop', id),
-  resize: (expanded) => ipcRenderer.send('resize', expanded),
+  settings: () => ipcRenderer.invoke('settings'),
+  record: (mode) => ipcRenderer.invoke('record', mode),
+  setMode: (mode) => ipcRenderer.invoke('mode', mode),
+  setDevice: (kind, id) => ipcRenderer.invoke('device', kind, id),
+  audio: (bytes) => ipcRenderer.send('audio', bytes),
+  hit: (over) => ipcRenderer.send('hit', over),
+  focus: (on) => ipcRenderer.send('focus', on),
 });

@@ -10,5 +10,10 @@
   },
   "devDependencies": {
     "electron": "^44.0.0"
+  },
+  "dependencies": {
+    "@google/genai": "^2.29.0",
+    "uiohook-napi": "^1.5.5",
+    "ws": "^8.22.0"
   }
 }
