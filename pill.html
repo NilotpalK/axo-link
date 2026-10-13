@@ -171,6 +171,7 @@
       <div class="srow"><span>Talk to axo</span><kbd id="k-talk"></kbd><button data-rec="talk">Change</button></div>
       <div class="srow"><label for="mic">Microphone</label><select id="mic"></select></div>
       <div id="meter" role="meter" aria-label="Microphone level" title="Speak: this bar should move"><i></i></div>
+      <p id="mic-using" class="hint"></p>
       <div class="srow"><label for="speaker">Speaker</label><select id="speaker"></select></div>
       <div class="srow"><span>When an agent finishes</span>
         <div class="seg"><button data-mode="desk">Chime</button><button data-mode="away">Speak</button></div>
@@ -286,6 +287,10 @@
         if (sending) axo.audio(new Uint8Array(data.buffer));
       };
       ctx.createMediaStreamSource(stream).connect(node);
+      // say which mic this really is: a "default" can be a virtual one sending silence
+      const label = stream.getAudioTracks()[0]?.label || 'an unnamed microphone';
+      $('#mic-using').textContent = 'Using ' + label;
+      axo.micLabel(label);
       return { stream, ctx };
     })().catch((e) => { mic = null; throw e; }));
   }

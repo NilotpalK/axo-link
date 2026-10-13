@@ -102,10 +102,14 @@ dictation in). Grant them and restart the app. The chords there are
 `Ctrl` + `Cmd` to dictate and `Ctrl` + `Cmd` + `Option` to talk to axo.
 
 **No sound getting through?** Open Settings in the pill and speak: the green
-bar under Microphone should move. Each recording also logs a line like
-`[voice] talk: 2.3s of audio, peak 41%`; a peak of 0–1% is silence. On
-Windows, check Settings → Privacy & security → Microphone → *Let desktop apps
-access your microphone*.
+bar under Microphone should move, and the line under it names the mic in use.
+A "default" mic can be a virtual one — WO Mic, Krisp, a camera app — that
+sends pure silence when its source isn't running; pick a real one from the
+list. Each recording also logs a line like
+`[voice] talk: 2.3s of audio, peak 41%`; a peak of 0–1% is silence. Still
+silent on Windows: Settings → Privacy & security → Microphone → *Let desktop
+apps access your microphone*. On a Mac: System Settings → Privacy & Security →
+Microphone → your terminal app.
 
 **More machines.** On the machine that hosts the hub, set a token and open
 it to the network (`setx` values apply to new terminals):

@@ -17,6 +17,7 @@ contextBridge.exposeInMainWorld('axo', {
   setMode: (mode) => ipcRenderer.invoke('mode', mode),
   setDevice: (kind, id) => ipcRenderer.invoke('device', kind, id),
   audio: (bytes) => ipcRenderer.send('audio', bytes),
+  micLabel: (label) => ipcRenderer.send('miclabel', label),
   hit: (over) => ipcRenderer.send('hit', over),
   focus: (on) => ipcRenderer.send('focus', on),
 });

@@ -1,5 +1,5 @@
 'use strict';
-const { app, BrowserWindow, ipcMain, dialog, screen, clipboard } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, screen, clipboard, systemPreferences } = require('electron');
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
@@ -17,7 +17,7 @@ const SIZE = { width: 420, height: 460 };
 const DEFAULTS = { dictate: ['Ctrl', 'Meta'], talk: ['Ctrl', 'Meta', 'Alt'], mode: 'desk', mic: '', speaker: '' };
 
 const sessions = new Sessions();
-let win, keys, roster = [], current = null;
+let win, keys, roster = [], current = null, micLabel = 'the microphone';
 const ui = (channel, value) => win?.webContents.send(channel, value);
 
 const settingsFile = path.join(app.getPath('userData'), 'settings.json');
@@ -86,7 +86,10 @@ const hk = hotkeys({ dictate: settings.dictate, talk: settings.talk }, {
       + (cancel ? ', cancelled' : silent ? ', silent so not sent' : ''));
     if (!cancel && silent) {
       c.end(true);
-      ui('voice', { mode, state: 'error', msg: "Didn't hear anything. Check the microphone in Settings." });
+      // all zeros is a dead or virtual device, not a quiet room
+      const msg = c.peak === 0 ? `Silence from ${micLabel}. Change mic in Settings.`
+        : "Didn't hear anything. Check the microphone in Settings.";
+      ui('voice', { mode, state: 'error', msg });
       return talk.drain();
     }
     ui('voice', { mode, state: !cancel && mode === 'dictate' ? 'thinking' : 'idle' });
@@ -136,9 +139,19 @@ function createWindow() {
 }
 
 app.setAppUserModelId('com.axolink.pill');
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   createWindow();
   try { keys = hook(hk); } catch (e) { console.error('hotkeys unavailable:', e.message); }
+  // macOS hands an app pure silence until the user says yes, and only asks
+  // when asked to. A no is sticky, so say where to change it.
+  if (process.platform === 'darwin') {
+    const ok = await systemPreferences.askForMediaAccess('microphone');
+    console.log(`[mic] macOS access: ${systemPreferences.getMediaAccessStatus('microphone')}`);
+    if (!ok) {
+      const tell = () => ui('voice', { state: 'error', msg: 'Mic blocked: System Settings > Privacy & Security > Microphone' });
+      if (win.webContents.isLoading()) win.webContents.once('did-finish-load', tell); else tell();
+    }
+  }
 });
 app.on('window-all-closed', () => app.quit());
 app.on('before-quit', () => { sessions.stopAll(); keys?.stop(); });
@@ -150,6 +163,11 @@ ipcMain.on('audio', (_e, bytes) => {
   for (let i = 0; i + 1 < b.length; i += 2) current.peak = Math.max(current.peak, Math.abs(b.readInt16LE(i)));
   current.bytes += b.length;
   current.audio(b.toString('base64'));
+});
+ipcMain.on('miclabel', (_e, label) => {
+  if (typeof label !== 'string' || label === micLabel) return;
+  micLabel = label.slice(0, 120);
+  console.log(`[mic] using ${micLabel}`);
 });
 // the pill tells us when the mouse is over it, so clicks land there and nowhere else
 ipcMain.on('hit', (_e, over) => win.setIgnoreMouseEvents(!over, { forward: true }));
