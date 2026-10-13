@@ -254,7 +254,7 @@
       return true;
     }
   });`;
-  let mic = null, sending = false, micT;
+  let mic = null, sending = false, micT, micFallback = false;
   const levels = new Array(11).fill(0);
   function level(data) {
     let sum = 0;
@@ -272,13 +272,16 @@
     // ponytail: the mic stays open a minute after use so the next press
     // doesn't clip your first word; the OS mic light stays on that long
     return (mic ??= (async () => {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          // ideal, not exact: an unplugged mic falls back to the default instead of failing
-          deviceId: settings.mic ? { ideal: settings.mic } : undefined,
-          channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true,
-        },
-      });
+      const base = { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true };
+      let stream, why = '';
+      // exactly the mic you picked; if it can't open (asleep, on another
+      // machine), the default for now -- said out loud, and retried later
+      if (settings.mic) {
+        try { stream = await navigator.mediaDevices.getUserMedia({ audio: { ...base, deviceId: { exact: settings.mic } } }); }
+        catch (e) { why = e.name; }
+      }
+      stream ??= await navigator.mediaDevices.getUserMedia({ audio: base });
+      micFallback = !!why;
       const ctx = new AudioContext();   // the device's own rate; TAP converts
       await ctx.audioWorklet.addModule(URL.createObjectURL(new Blob([TAP], { type: 'text/javascript' })));
       const node = new AudioWorkletNode(ctx, 'tap');
@@ -289,12 +292,17 @@
       ctx.createMediaStreamSource(stream).connect(node);
       // say which mic this really is: a "default" can be a virtual one sending silence
       const label = stream.getAudioTracks()[0]?.label || 'an unnamed microphone';
-      $('#mic-using').textContent = 'Using ' + label;
+      $('#mic-using').textContent = 'Using ' + label +
+        (micFallback ? ' — your pick could not be opened (' + why + '), will retry' : '');
       axo.micLabel(label);
       return { stream, ctx };
     })().catch((e) => { mic = null; throw e; }));
   }
-  function micOn() { sending = true; return micOpen(); }
+  function micOn() {
+    if (micFallback) closeMic();   // stuck on the default: try your pick again
+    sending = true;
+    return micOpen();
+  }
   function closeMic() {
     if (!mic || sending) return;
     const m = mic;
@@ -506,7 +514,14 @@
     fill($('#mic'), 'audioinput', settings.mic);
     fill($('#speaker'), 'audiooutput', settings.speaker);
   }
-  navigator.mediaDevices.ondevicechange = () => { if (tab === 'settings') devices(); };
+  navigator.mediaDevices.ondevicechange = () => {
+    if (tab === 'settings') devices();
+    // your pick may have just connected (Bluetooth takes a moment)
+    if (micFallback && !sending) {
+      closeMic();
+      if (previewing) micOpen().catch((e) => { $('#set-err').textContent = 'Microphone: ' + e.message; });
+    }
+  };
   for (const kind of ['mic', 'speaker']) {
     const sel = $('#' + kind);
     sel.onmousedown = () => axo.focus(true);   // a dropdown needs the window focused

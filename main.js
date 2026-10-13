@@ -1,5 +1,5 @@
 'use strict';
-const { app, BrowserWindow, ipcMain, dialog, screen, clipboard, systemPreferences } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, screen, clipboard, ClipboardItem, systemPreferences } = require('electron');
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
@@ -95,7 +95,7 @@ const hk = hotkeys({ dictate: settings.dictate, talk: settings.talk }, {
     ui('voice', { mode, state: !cancel && mode === 'dictate' ? 'thinking' : 'idle' });
     try {
       const text = await c.end(cancel);
-      if (text) paste(text);
+      if (text) await paste(text);
       if (mode === 'dictate') ui('voice', { mode, state: 'idle' });
     } catch (e) {
       ui('voice', { mode, state: 'error', msg: e.message });
@@ -105,13 +105,21 @@ const hk = hotkeys({ dictate: settings.dictate, talk: settings.talk }, {
 });
 
 /** type the dictation into whatever app has focus, then put the clipboard back */
-function paste(text) {
-  const prev = { text: clipboard.readText(), image: clipboard.readImage() };
-  clipboard.writeText(text);
+async function paste(text) {
+  // Copy out every format now: items from read() may fetch lazily, and the
+  // clipboard is about to hold the dictation instead.
+  const saved = [];
+  for (const item of await clipboard.read().catch(() => [])) {
+    const data = {};
+    for (const type of item.types) data[type] = await item.getType(type).catch(() => undefined);
+    for (const type of Object.keys(data)) if (data[type] === undefined) delete data[type];
+    if (Object.keys(data).length) saved.push(new ClipboardItem(data));
+  }
+  await clipboard.writeText(text);
   keys.paste();
-  // ponytail: restores plain text or an image; files and rich formats on the
-  // clipboard are lost. Save every format if that ever bites.
-  setTimeout(() => (prev.image.isEmpty() ? clipboard.writeText(prev.text) : clipboard.writeImage(prev.image)), 500);
+  // give the target app time to read the paste before putting yours back;
+  // an empty clipboard keeps the dictation, which is handy anyway
+  if (saved.length) setTimeout(() => clipboard.write(saved).catch(() => {}), 500);
 }
 
 function createWindow() {
