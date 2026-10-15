@@ -13,7 +13,12 @@
   },
   "dependencies": {
     "@google/genai": "^2.29.0",
+    "@xterm/headless": "^5.5.0",
+    "node-pty": "^1.1.0",
     "uiohook-napi": "^1.5.5",
     "ws": "^8.22.0"
+  },
+  "bin": {
+    "axo": "axo.js"
   }
 }

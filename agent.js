@@ -24,6 +24,9 @@ const brief = (s, max = 200) => {
   return out.length > max ? out.slice(0, max - 1).trimEnd() + '\u2026' : out;
 };
 
+/** a turn that ends on a question is waiting on an answer, not just done */
+const kindOf = (summary) => (/\?["')\]]*\s*$/.test(summary) ? 'question' : 'finished');
+
 /** "Edit x3, Bash x2" -- what it did, without asking a model to summarise. */
 const tally = (names) => {
   const c = new Map();
@@ -31,12 +34,14 @@ const tally = (names) => {
   return [...c].map(([n, k]) => (k > 1 ? `${n} \u00d7${k}` : n)).join(', ');
 };
 
-/** The interesting half of a tool call, for "wants to run: Bash(rm -rf /)". */
-const argPreview = (input) => {
+/** The interesting half of a tool call, for "wants to run: Bash(rm -rf /)".
+ *  Whole, not a preview: you approve what you read, so it can't be cut short.
+ *  The cap only stops a pathological input from flooding the pill. */
+const argText = (input) => {
   const v = input?.command ?? input?.file_path ?? input?.path ?? input?.pattern
     ?? input?.url ?? (input && JSON.stringify(input));
   const s = String(v ?? '').replace(/\s+/g, ' ').trim();
-  return s.length > 60 ? s.slice(0, 59) + '\u2026' : s;
+  return s.length > 2000 ? s.slice(0, 1999) + '\u2026' : s;
 };
 
 // ponytail: a plain object per vendor, not a driver class. codex/grok slot in
@@ -80,13 +85,13 @@ const VENDORS = {
           }) + '\n');
           return null;
         }
-        turn.asks.push({ id: o.request_id, input: r.input, label: `${r.tool_name}(${argPreview(r.input)})` });
+        turn.asks.push({ id: o.request_id, input: r.input, label: `${r.tool_name}(${argText(r.input)})` });
         return asking(turn);
       }
       if (o.type === 'control_cancel_request') {
         if (!turn.asks.some((a) => a.id === o.request_id)) return null;
         turn.asks = turn.asks.filter((a) => a.id !== o.request_id);
-        return turn.asks.length ? asking(turn) : { state: 'running', waiting_kind: null, pending: [] };
+        return turn.asks.length ? asking(turn) : { state: 'running', waiting_kind: null, pending: [], pending_ids: [] };
       }
 
       if (o.type === 'assistant') {
@@ -106,8 +111,8 @@ const VENDORS = {
         turn.asks = [];
         return {
           state: o.is_error === true ? 'error' : 'waiting',
-          waiting_kind: /\?["')\]]*\s*$/.test(summary) ? 'question' : 'finished',
-          pending: [],
+          waiting_kind: kindOf(summary),
+          pending: [], pending_ids: [],
           summary,
           did: tally(turn.tools),
         };
@@ -121,6 +126,7 @@ const freshTurn = () => ({ tools: [], text: '', asks: [] });
 const asking = (turn) => ({
   state: 'waiting', waiting_kind: 'approval_request',
   pending: turn.asks.map((a) => a.label),
+  pending_ids: turn.asks.map((a) => a.id),   // what an approval has to name
   summary: brief(turn.text), did: tally(turn.tools),
 });
 
@@ -153,7 +159,7 @@ class Sessions extends EventEmitter {
       id, vendor, cwd,
       label: label || `${vendor} ${id.slice(0, 4)}`,
       state: 'idle', waiting_kind: null, alive: true,
-      last: '', summary: '', did: '', pending: [],
+      last: '', summary: '', did: '', pending: [], pending_ids: [],
       since: Date.now(),
     });
 
@@ -168,7 +174,7 @@ class Sessions extends EventEmitter {
     child.on('error', (e) => this.#set(id, { state: 'error', last: e.message, summary: e.message }));
     child.on('exit', (code) => {
       this.#procs.delete(id);
-      const gone = { alive: false, waiting_kind: null, pending: [] };
+      const gone = { alive: false, waiting_kind: null, pending: [], pending_ids: [] };
       // a stop we asked for, or a clean exit, just ends the session; a crash should say why
       if (code && !proc.stopping) {
         const why = proc.stderr.trim() || `exited ${code}`;
@@ -185,14 +191,23 @@ class Sessions extends EventEmitter {
     if (p.turn.asks.length) return this.#answer(id, false, text);
     p.child.stdin.write(VENDORS[p.vendor].write(text));
     p.turn = freshTurn();
+    // `last` stays the agent's own words; what you sent is `prompt`
     this.#set(id, {
-      state: 'running', last: text,
-      waiting_kind: null, summary: '', did: '', pending: [],
+      state: 'running', prompt: text,
+      waiting_kind: null, summary: '', did: '', pending: [], pending_ids: [],
     });
     return true;
   }
 
-  approve(id) { return this.#answer(id, true); }
+  /** Approve exactly the requests you were shown, named by id. If the agent
+   *  has since withdrawn one or added another, nothing is approved. */
+  approve(id, asks) {
+    const p = this.#procs.get(id);
+    const now = p?.turn.asks.map((a) => a.id) ?? [];
+    const same = Array.isArray(asks) && asks.length === now.length && now.every((x) => asks.includes(x));
+    return same && this.#answer(id, true);
+  }
+  // refusing is safe whatever changed, so deny needs no ids
   deny(id) { return this.#answer(id, false, "Denied. Don't do that \u2014 tell me what you'd do instead."); }
 
   // ponytail: one answer covers every pending ask (parallel tool calls come in
@@ -202,7 +217,7 @@ class Sessions extends EventEmitter {
     if (!p?.turn.asks.length || !p.child.stdin?.writable) return false;
     for (const a of p.turn.asks) p.child.stdin.write(VENDORS[p.vendor].answer(a, allow, why));
     p.turn.asks = [];
-    this.#set(id, { state: 'running', waiting_kind: null, pending: [] });
+    this.#set(id, { state: 'running', waiting_kind: null, pending: [], pending_ids: [] });
     return true;
   }
 
@@ -231,4 +246,4 @@ class Sessions extends EventEmitter {
   }
 }
 
-module.exports = { Sessions, VENDORS, brief, tally };
+module.exports = { Sessions, VENDORS, brief, tally, argText, kindOf };

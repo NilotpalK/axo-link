@@ -4,17 +4,20 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 const { Sessions } = require('./agent');
-const { startHub } = require('./hub');
+const { startHub, loadEnv } = require('./hub');
+loadEnv();   // GEMINI_API_KEY and friends, from .env, before anything reads them
 const { connect } = require('./link');
 const { hotkeys, invalid, label, hook } = require('./keys');
-const { dictation, secretary, toolRunner, update } = require('./voice');
+const { dictation, secretary, toolRunner, update, speakable } = require('./voice');
 
 // A fixed transparent window at the bottom centre. The pill draws inside it
 // and every click outside the pill passes straight through to what's behind.
 const SIZE = { width: 420, height: 460 };
 // Wispr's chords: hold Ctrl+Win to dictate, add Alt to talk to axo instead
 // mic/speaker: device ids, '' meaning the system default
-const DEFAULTS = { dictate: ['Ctrl', 'Meta'], talk: ['Ctrl', 'Meta', 'Alt'], mode: 'desk', mic: '', speaker: '' };
+const DEFAULTS = {
+  dictate: ['Ctrl', 'Meta'], talk: ['Ctrl', 'Meta', 'Alt'], mode: 'desk', mic: '', speaker: '', clean: true,
+};
 
 const sessions = new Sessions();
 let win, keys, roster = [], current = null, micLabel = 'the microphone';
@@ -24,7 +27,7 @@ const settingsFile = path.join(app.getPath('userData'), 'settings.json');
 let settings = { ...DEFAULTS };
 try { settings = { ...DEFAULTS, ...JSON.parse(fs.readFileSync(settingsFile, 'utf8')) }; } catch { /* first run */ }
 const view = () => ({
-  mode: settings.mode, mic: settings.mic, speaker: settings.speaker,
+  mode: settings.mode, mic: settings.mic, speaker: settings.speaker, clean: settings.clean,
   dictate: label(settings.dictate), talk: label(settings.talk),
 });
 const save = () => { fs.writeFileSync(settingsFile, JSON.stringify(settings, null, 2)); ui('settings', view()); };
@@ -36,14 +39,23 @@ const setMode = (mode) => {
 };
 
 // No AXO_HUB means this machine hosts the hub. Other machines set AXO_HUB to
-// ws://<this machine>:7777 and the same AXO_TOKEN.
+// ws://<this machine>:7777 and the same AXO_TOKEN. Without AXO_TOKEN the hub
+// gets a random one per run, known only to this app, so no other program on
+// the PC can connect to it.
+const hubToken = process.env.AXO_TOKEN || require('node:crypto').randomBytes(24).toString('hex');
 if (!process.env.AXO_HUB) {
-  startHub({ host: process.env.AXO_HOST || '127.0.0.1' })
+  startHub({ host: process.env.AXO_HOST || '127.0.0.1', token: hubToken })
     .on('error', (e) => console.error('hub not started:', e.message));   // e.g. one is already running
 }
+const hubUrl = process.env.AXO_HUB || 'ws://127.0.0.1:7777';
+// `axo claude` in your terminals finds the hub through this file. It sits in
+// your user profile, so it's as private as the rest of your app data.
+fs.mkdirSync(app.getPath('userData'), { recursive: true });
+fs.writeFileSync(path.join(app.getPath('userData'), 'hub.json'),
+  JSON.stringify({ url: hubUrl, token: hubToken }), { mode: 0o600 });
 const link = connect({
-  url: process.env.AXO_HUB || 'ws://127.0.0.1:7777',
-  token: process.env.AXO_TOKEN,
+  url: hubUrl,
+  token: hubToken,
   device: process.env.AXO_DEVICE || os.hostname(),
   sessions,
   onMessage: (m) => {
@@ -55,10 +67,45 @@ const link = connect({
   },
 });
 
+// Reading something out in full, word for word: a part at a time through the
+// hub's text-to-speech, the next part being voiced while this one plays.
+// Any hotkey press stops it.
+// ponytail: an away-mode update arriving mid-read plays between two parts.
+let reading = null;
+function readAloud(text) {
+  reading?.stop();
+  const parts = speakable(text);
+  const run = { stopped: false, stop() { this.stopped = true; } };
+  reading = run;
+  const voiced = (t) => {
+    // generous: the hub may be waiting out the free tier's 3-a-minute limit
+    const p = link.ask({ t: 'speak', text: t }, 90000).then((r) => r.audio);
+    p.catch(() => {});   // a part abandoned by a stop isn't an error
+    return p;
+  };
+  (async () => {
+    let next = voiced(parts[0]);
+    for (let i = 0; i < parts.length && !run.stopped; i++) {
+      const now = next;
+      next = parts[i + 1] ? voiced(parts[i + 1]) : null;
+      let audio;
+      try { audio = await now; } catch (e) {
+        if (!run.stopped) ui('voice', { state: 'error', msg: `Couldn't read it out: ${e.message}` });
+        break;
+      }
+      if (run.stopped) break;
+      ui('caption', parts[i] + ' ');
+      ui('play', audio);   // the pill queues it after whatever is playing
+    }
+    if (reading === run) reading = null;
+  })();
+  return { ok: true, reading: `${parts.length} parts, starting now` };
+}
+
 const talk = secretary({
   link,
   roster: () => roster,
-  run: toolRunner({ link, roster: () => roster, setMode }),
+  run: toolRunner({ link, roster: () => roster, setMode, readAloud }),
   busy: () => !!current,   // never talk over your dictation either
   ui: {
     audio: (b64) => ui('play', b64),
@@ -74,11 +121,12 @@ const SILENT = 1000;
 
 const hk = hotkeys({ dictate: settings.dictate, talk: settings.talk }, {
   onBegin(mode) {
+    if (reading) { reading.stop(); reading = null; ui('flush'); }   // you pressed a key: stop reading
     current = Object.assign(mode === 'dictate' ? dictation(link) : talk.listen(), { peak: 0, bytes: 0 });
     ui('voice', { mode, state: 'listening' });
   },
   onLock: (mode) => ui('voice', { mode, state: 'locked' }),
-  async onEnd(mode, { cancel }) {
+  async onEnd(mode, { cancel, stale }) {
     const c = current;
     current = null;
     const silent = c.peak < SILENT;
@@ -95,14 +143,28 @@ const hk = hotkeys({ dictate: settings.dictate, talk: settings.talk }, {
     ui('voice', { mode, state: !cancel && mode === 'dictate' ? 'thinking' : 'idle' });
     try {
       const text = await c.end(cancel);
-      if (text) await paste(text);
-      if (mode === 'dictate') ui('voice', { mode, state: 'idle' });
+      if (text) await paste(await tidy(text));
+      // a newer recording owns the pill now; this one only finishes its paste
+      if (mode === 'dictate' && !stale()) ui('voice', { mode, state: 'idle' });
     } catch (e) {
-      ui('voice', { mode, state: 'error', msg: e.message });
+      if (!stale()) ui('voice', { mode, state: 'error', msg: e.message });
     }
     talk.drain();   // anything held back while you were talking
   },
 });
+
+/** Wispr-style tidy-up on the hub. Slow, failed or odd-looking -> your exact words. */
+async function tidy(raw) {
+  if (!settings.clean) return raw;
+  try {
+    const r = await link.ask({ t: 'clean', text: raw }, 3000);   // ~1 s warm; the first after a start sets up a connection
+    if (r.kept) console.log(`[voice] pasted your exact words: ${r.kept}`);
+    return r.text;
+  } catch (e) {
+    console.log(`[voice] pasted your exact words: ${e.message}`);
+    return raw;
+  }
+}
 
 /** type the dictation into whatever app has focus, then put the clipboard back */
 async function paste(text) {
@@ -184,9 +246,11 @@ ipcMain.on('focus', (_e, on) => { win.setFocusable(on); if (on) win.focus(); });
 
 // every agent action goes through the hub, so the pill drives any machine's agents
 ipcMain.handle('list', () => roster);
-for (const op of ['send', 'approve', 'deny', 'stop']) {
+for (const op of ['send', 'deny', 'stop']) {
   ipcMain.handle(op, (_e, id, text) => link.do(op, id, text));
 }
+// an approval names the request ids the pill showed you
+ipcMain.handle('approve', (_e, id, asks) => link.do('approve', id, undefined, asks));
 // starting one is local: the folder picker is on this machine
 ipcMain.handle('pick', async () => {
   const r = await dialog.showOpenDialog({ properties: ['openDirectory'] });
@@ -197,6 +261,11 @@ ipcMain.handle('pick', async () => {
 
 ipcMain.handle('settings', () => view());
 ipcMain.handle('mode', (_e, mode) => setMode(mode));
+ipcMain.handle('clean', (_e, on) => {
+  settings.clean = on === true;
+  save();
+  return true;
+});
 ipcMain.handle('device', (_e, kind, id) => {
   if ((kind !== 'mic' && kind !== 'speaker') || typeof id !== 'string' || id.length > 512) return false;
   settings[kind] = id;

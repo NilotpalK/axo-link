@@ -43,6 +43,25 @@ test('adding Alt switches dictation to talking to axo; another shortcut cancels'
   ]);
 });
 
+test('a recording replaced by a newer one knows it is stale', () => {
+  let t = 0, cancelled;
+  const hk = hotkeys({ dictate: ['Ctrl', 'Meta'], talk: ['Ctrl', 'Meta', 'Alt'] }, {
+    onBegin: () => {},
+    onEnd: (m, info) => { if (m === 'dictate') cancelled = info; },
+    now: () => t,
+  });
+  hk.down('Ctrl'); hk.down('Meta');
+  hk.down('Alt');   // dictation is cancelled, talking to axo begins
+  assert.equal(cancelled.cancel, true);
+  assert.equal(cancelled.stale(), true, 'its late "idle" must not switch off the new mic');
+
+  hk.up('Alt'); hk.up('Meta'); hk.up('Ctrl');
+  let last;
+  const hk2 = hotkeys({ dictate: ['Ctrl', 'Meta'] }, { onBegin: () => {}, onEnd: (m, info) => { last = info; }, now: () => t });
+  hk2.down('Ctrl'); hk2.down('Meta'); t += 800; hk2.up('Meta');
+  assert.equal(last.stale(), false, 'a plain release stays current until the next press');
+});
+
 test('recording a chord captures the widest set held; accidental chords are refused', () => {
   const { hk, log } = rig();
   let got;

@@ -15,11 +15,17 @@ const same = (set, combo) => set.size === combo.length && combo.every((k) => set
 /** combos: { mode: ['Ctrl', 'Meta'], ... }  ->  { down(key), up(key), record(cb) } */
 function hotkeys(combos, { onBegin, onEnd, onLock = () => {}, now = Date.now }) {
   const held = new Set();
-  let active = null, locked = false, t0 = 0, recording = null, widest = [];
+  let active = null, locked = false, t0 = 0, recording = null, widest = [], gen = 0;
 
   const hit = () => Object.keys(combos).find((m) => same(held, combos[m]));
-  const begin = (m) => { active = m; locked = false; t0 = now(); onBegin(m); };
-  const end = (cancel) => { const m = active; active = null; locked = false; onEnd(m, { cancel }); };
+  const begin = (m) => { gen++; active = m; locked = false; t0 = now(); onBegin(m); };
+  // stale() turns true once a newer recording has begun, so a slow finish
+  // (paste, clean-up) can't touch the pill while you're already talking again
+  const end = (cancel) => {
+    const m = active, g = gen;
+    active = null; locked = false;
+    onEnd(m, { cancel, stale: () => gen !== g });
+  };
 
   return {
     down(key) {

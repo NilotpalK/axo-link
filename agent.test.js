@@ -77,10 +77,11 @@ test('a permission prompt pauses the turn as an approval, and approve answers it
   ]);
   assert.equal(rec.waiting_kind, 'approval_request');
   assert.deepEqual(rec.pending, ['Bash(rm -rf ./migrations/old)']);
+  assert.deepEqual(rec.pending_ids, ['r1']);
   assert.equal(rec.summary, 'I need to remove the old migration.');
 
   child.written.length = 0;
-  assert.equal(s.approve(id), true);
+  assert.equal(s.approve(id, ['r1']), true);
   assert.deepEqual(answered(child), [{
     subtype: 'success', request_id: 'r1',
     response: { behavior: 'allow', updatedInput: { command: 'rm -rf ./migrations/old' } },
@@ -88,7 +89,23 @@ test('a permission prompt pauses the turn as an approval, and approve answers it
   const after = s.list()[0];
   assert.equal(after.state, 'running', 'same turn carries on, no new turn sent');
   assert.deepEqual(after.pending, []);
-  assert.equal(s.approve(id), false, 'nothing left to approve');
+  assert.equal(s.approve(id, ['r1']), false, 'nothing left to approve');
+});
+
+test('approve only allows the exact requests you were shown, and shows them in full', async () => {
+  const long = 'npm run build && ' + 'node scripts/migrate.js --step '.repeat(4) + '--force';
+  const { s, id, child } = await turn([ask('r1', 'Bash', { command: long })]);
+  assert.equal(s.list()[0].pending[0], `Bash(${long})`, 'the whole command, not a 60-character preview');
+
+  // a second request arrives after you read the first: a yes to r1 alone allows nothing
+  const second = nextEvent(s, 'update');
+  child.stdout.write(ask('r2', 'Bash', { command: 'rm -rf build' }));
+  await second;
+  child.written.length = 0;
+  assert.equal(s.approve(id, ['r1']), false);
+  assert.equal(s.approve(id), false, 'no ids, no approval');
+  assert.equal(child.written.length, 0, 'nothing was sent to the agent');
+  assert.equal(s.approve(id, ['r2', 'r1']), true, 'naming both, in any order');
 });
 
 test('typing back during an approval denies it with your words; deny alone says no', async () => {

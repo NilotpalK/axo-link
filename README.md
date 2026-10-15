@@ -57,9 +57,24 @@ agent. Nothing dials in, so it works behind home and office routers. See
 Tap instead of holding to go hands-free; tap again to stop. Both chords are
 Wispr's defaults and can be changed under Settings in the pill.
 
+Dictation is cleaned up the way Wispr does it: fillers out, self-corrections
+applied ("Friday, no wait, Thursday" → "Thursday"), punctuation fixed — your
+words, not a rewrite. The hub runs it through `gemini-3.5-flash-lite`, about a
+second. A question you dictate comes back as the question, never an answer; if
+the result looks like an answer or rewrite anyway, or takes over 3 s, your
+exact words are pasted instead. Settings → *Clean up dictation* turns it off.
+
 At the desk an agent finishing is a chime and an amber bar, and axo only
 speaks when you hold the key. Switch to **away** (Settings, or tell axo you're
 driving) and it says each update out loud as it happens.
+
+"Read me the whole thing" -- an agent's full last message, or a terminal's
+screen -- goes through a text-to-speech model (`gemini-3.8-flash-lite-tts`,
+same voice as axo), because axo's conversational voice keeps things short and
+may reword. Every word is read, in order; only Markdown marks are dropped. It
+starts after about 4 s and any hotkey stops it. The free tier allows 10 speech
+requests a day, about two long messages, so this wants billing turned on
+(about 3 cents for a 3-minute read).
 
 Both voices are Gemini Live sessions (`gemini-3.5-transcribe-live` for
 dictation, `gemini-3.8-live` for axo). The app never holds the Gemini key: it
@@ -82,18 +97,29 @@ npm start
 Click the bar to open the panel; `+` picks a folder and starts an agent in it.
 Alone, the app hosts its own hub on `127.0.0.1:7777`.
 
-**Voice** needs a Gemini API key where the hub runs. Windows (applies to
-terminals opened afterwards):
+**Claude in your terminal.** Once, from this folder, make `axo` a command:
 
 ```bash
-setx GEMINI_API_KEY "your-key"
+npm link
 ```
 
-macOS (add the line to `~/.zshrc` to keep it):
+Then, in any terminal, in any project, start Claude through axo:
 
 ```bash
-export GEMINI_API_KEY="your-key"
+axo claude
 ```
+
+It's the real Claude Code, untouched, and any `claude` arguments work after
+it. The session shows up in the pill (marked *terminal*), axo lists it, and
+"tell deskill to run the tests" -- or typing in the pill's box -- types into
+that terminal as if you had. Start it before or after the app; it finds the
+app either way. Live state and "what exactly did it do" come next (see
+[docs/architecture.md](docs/architecture.md)).
+
+**Voice** needs a Gemini API key where the hub runs. Put it in a `.env` file in
+this folder -- copy `.env.example` to `.env` and fill in `GEMINI_API_KEY=`.
+`.env` is git-ignored, and its values win over the PC's own environment
+variables (a blank one is ignored). The other settings below can go there too.
 
 **First run on a Mac** asks for three permissions in System Settings →
 Privacy & Security, for the terminal you ran `npm start` from: **Microphone**,
@@ -128,8 +154,10 @@ On every other machine, point at it with the same token:
 setx AXO_HUB "ws://home-pc:7777"
 ```
 
-`AXO_DEVICE` overrides the machine name shown in the pill. The hub refuses to
-listen beyond localhost without `AXO_TOKEN`. `node hub.js` runs it standalone.
+`AXO_DEVICE` overrides the machine name shown in the pill. Every connection
+to the hub needs the token, on localhost too; without `AXO_TOKEN` the app makes
+a random one each run that only it knows. Connections from web pages are
+refused outright. `AXO_TOKEN=… node hub.js` runs the hub standalone.
 
 ## Checks
 
@@ -137,12 +165,16 @@ listen beyond localhost without `AXO_TOKEN`. `node hub.js` runs it standalone.
 npm test
 ```
 
-Eighteen tests. Against a fake CLI: turn settling, the `did` tally,
-`waiting_kind`, mid-turn approve/deny, cancelled prompts, crash vs. stop.
-Against a real hub: one roster across machines, routing to the owning
-machine, offline reported, wrong token shut out, voice tokens. The hotkey
-machine: hold, tap for hands-free, Ctrl+Win → +Alt switch, other shortcuts
-left alone, chord recording. axo's tools: right agent, nonsense refused.
+Twenty-four tests. Against a fake CLI: turn settling, the `did` tally,
+`waiting_kind`, mid-turn approve/deny, approvals bound to the requests shown,
+cancelled prompts, crash vs. stop. Against a real hub: one roster across
+machines, routing to the owning machine, offline reported, wrong tokens and
+odd messages shut out without a crash, browsers refused, malformed agents
+dropped, reconnecting to a hub that starts late, voice tokens. `axo claude`
+end to end with a stand-in for claude: listed, typed into, stopped. The hotkey
+machine: hold, tap for hands-free, Ctrl+Win → +Alt switch, stale recordings,
+other shortcuts left alone, chord recording. axo's tools: right agent,
+approvals must name their requests, nonsense refused.
 
 ```bash
 node smoke.js
@@ -160,6 +192,7 @@ catch the CLI changing its protocol out from under the parser.
 | `agent.js` | spawn, NDJSON parse, state machine, mid-turn approvals. Vendors are a plain object, not a class hierarchy |
 | `hub.js` | the hub: merged roster, routing, token check, heartbeat |
 | `link.js` | the app's one outbound socket: connector + pill, request/reply, redials forever |
+| `axo.js` | `axo claude`: the real Claude Code in a pseudo-terminal, registered with the hub so axo can list and type into it |
 | `keys.js` | global hold-to-talk hotkeys: the state machine, plus the OS keyboard hook |
 | `voice.js` | the two Gemini Live sessions (dictation, axo) and axo's tools |
 | `main.js` | Electron main: hosts the hub unless `AXO_HUB` is set, the click-through window, paste, settings, IPC |
@@ -175,8 +208,6 @@ desk and away modes.
 Deliberately out, with the trigger for adding each (order in
 [docs/architecture.md](docs/architecture.md)):
 
-- **Dictation cleanup** — Wispr strips "um"s and fixes grammar; this types the
-  transcript verbatim. Add a text-model pass if raw dictation reads badly.
 - **Cloud hub, sign-in, device pairing** — when someone other than you uses it.
   Today it's one shared token.
 - **Hooks for sessions you started yourself** — when you want terminal and

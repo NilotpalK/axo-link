@@ -1,14 +1,18 @@
 # axo-link architecture
 
-Status: design, October 2026. Phase 1 (the single-machine pill) is the code in
-the repo root; everything below is where it is going.
+Status: October 2026. Built (branch `phase-2-hub-and-voice`): hub, connector,
+Wispr-style pill, dictation, axo's voice. Next: axo as the secretary over your
+Claude terminal sessions -- see [Next](#next-axo-as-the-secretary-over-claude-terminal-sessions).
 
 ## The idea
 
-A secretary for your coding agents. The agents run on your own machines. A
-cloud hub keeps track of them, tells you by voice what they did and when they
-need you, and carries your instructions back. You talk to the hub, never to
-each agent's window.
+A secretary for your coding agents. **axo is the secretary; each agent
+session is an employee.** You ask axo who's working and on what, pick one, see
+exactly what it has done, give it instructions, and switch to another
+whenever you like -- by voice, at the desk or away.
+
+The agents run on your own machines. A hub keeps track of them, tells you
+what they did and when they need you, and carries your instructions back.
 
 ## Components
 
@@ -109,15 +113,16 @@ sequenceDiagram
     H->>P: roster update
 ```
 
-## Two kinds of session
+## Three kinds of session
 
-| | Spawned by the connector | Attached via hooks |
-|---|---|---|
-| How | connector runs the CLI, drives stdin/stdout | Claude Code hook script reports to the connector |
-| Knows when it's waiting | yes | yes |
-| Approve / deny | yes | yes (permission hook) |
-| Reply | yes | short answers only (Stop hook, within its timeout) |
-| Start new work | yes | no |
+| | Spawned (`+` in the pill) | Launched (`axo` in a terminal) | Attached (plain `claude`, desktop app) |
+|---|---|---|---|
+| How | connector runs `claude -p`, drives stdin/stdout | launcher runs the real Claude TUI in a pseudo-terminal the companion app can type into | Claude Code hooks report to the connector |
+| Has a window | no, the pill is its window | yes, your terminal | yes, its own |
+| Knows when it's waiting | yes | yes (hooks) | yes (hooks) |
+| Talk to it any time | yes | yes | no: only when it pauses, in away mode; or "bring it in" |
+| Approve / deny | yes | yes | yes, while the hook is held |
+| Built | yes | next | after |
 
 Codex: spawned works; attached is notify-only (`notify` in `config.toml`).
 
@@ -146,6 +151,58 @@ Built so far: `agents` (covers briefing and status), `reply`, `approve`,
 `deny`, `stop`, `set_mode`. The rest wait on the hub keeping history
 (`briefing since`, `notify_when`) and on registered projects (`start_agent`).
 
+## Next: axo as the secretary over Claude terminal sessions
+
+Starting with Claude Code in the terminal. One rule: **start sessions with
+`axo claude` instead of `claude`** -- a deliberate choice each time, no alias
+(and room for `axo codex` later). `axo claude` runs the real Claude Code in your terminal
+-- it looks and works exactly the same -- with the companion app sitting
+invisibly in between, so it can type into that terminal and knows the
+session's id and folder from the start.
+
+What it sounds like:
+
+> **You:** Hey axo, which sessions are running?
+> **axo:** Three. deskill is running tests, axo-link has been idle ten minutes, docs is waiting on an approval.
+> **You:** Let's talk to deskill. What exactly did it do?
+> **axo:** It edited fetch.js and retry.js, created a timeout test, and ran npm test, which passed.
+> **You:** Tell it to also add a test for the slow-network case.
+> **axo:** Sent. *(It appears in deskill's terminal as if you'd typed it.)*
+> **You:** Switch to docs. Read me its last message.
+
+How each part works:
+
+1. **The session list** lives in the companion app. Launched sessions register
+   themselves; Claude Code hooks report each one's state (working, done,
+   waiting on you).
+2. **Talking to a session** types your words into its terminal. axo stays in
+   the middle (decided): it passes your words on and tells you when the
+   session answers -- no direct line.
+3. **Switching** moves where your words go: "switch to docs".
+4. **Knowing what it did -- exactly, never axo's paraphrase.** Claude Code saves
+   every session's full history on the PC; everything below is read from it.
+
+| You say | You get | Built from |
+|---|---|---|
+| "Read me its last message" | Claude's own words, word for word | the Stop hook's `last_assistant_message`, read by `gemini-3.8-flash-lite-tts` in axo's voice, a part at a time (first sentence alone so it starts in ~4 s). Built. Paid tier: the free one allows 10 speech requests a day |
+| "What exactly did it do?" | every action in order: each file edited (path), each command run (exact command, pass or fail) | the history file, parsed locally -- no AI in between |
+| "Show me" / "what changed?" | the session's terminal comes forward, or its full history opens in the pill; the code changes as a diff | the launcher knows its window; git for the diff |
+
+**Summaries come from the session itself.** axo never summarises a history.
+For a summary you ask the session -- "deskill, sum up what you've done" -- which
+knows its own work best, at the cost of one of its turns. So no session history
+is sent to Gemini to be summarised.
+
+**Sessions started with plain `claude`** are listed too (from their saved
+history and hooks), and their action log and last message can be read out.
+To talk to one: "bring in deskill" -- axo reopens it under `axo` in a new
+terminal, continuing where it left off, and you close the old window. Two
+processes must never drive one session at once.
+
+Voice tools this adds: `sessions`, `talk_to(session)`, `say(text)`,
+`last_message(session)`, `actions(session)`, `show(session)`,
+`bring_in(session)`.
+
 ## The PC pill
 
 Wispr Flow's interaction, pointed at agents as well as text fields.
@@ -159,26 +216,45 @@ Wispr Flow's interaction, pointed at agents as well as text fields.
 - Desk mode: an agent finishing is a chime and the amber bar; axo speaks only
   when you hold the key. Away mode: axo says each update as it happens. Set in
   Settings, or by telling axo "I'm driving".
-- Dictation: `gemini-3.5-transcribe-live`, typed in via the clipboard and
-  Ctrl+V, clipboard restored after. axo: `gemini-3.8-live` with the tools
+- Dictation: `gemini-3.5-transcribe-live`, then a Wispr-style clean-up on the
+  hub with `gemini-3.5-flash-lite` (~1 s; raw words if it fails, takes over
+  3 s, or looks like an answer), typed in via the clipboard and Ctrl+V,
+  clipboard restored after. axo: `gemini-3.8-live` with the tools
   above. Both open with one-use tokens from the hub; the hub picks the model.
 
 ## Trust boundaries
 
-- Code and CLI logins never leave the user's machine.
-- The hub sees summaries, tool names, and commands awaiting approval.
+- CLI logins never leave the user's machine.
+- The hub sees each agent's folder path, its last message in full, tool names
+  and commands awaiting approval -- more than summaries, and the last message
+  can quote code. That message also reaches Gemini. Trim this to an explicit
+  outbound projection before the hub is hosted.
 - The Gemini key stays on the hub; clients get short-lived tokens.
-- Destructive actions are read back and need an explicit yes.
-- Every device token is revocable.
+- Every connection needs the hub token, localhost included; connections from
+  browsers (anything sending an Origin header) are refused. Malformed messages
+  and agent records are dropped.
+- Approvals name the exact request ids they were shown; if the agent's
+  requests changed since, nothing is approved. Commands are shown and read out
+  in full, never truncated.
+- Every device token is revocable. (Not yet: today it's one shared token.)
 
 ## Build order
 
 1. ~~Hub, connector and pill for one user, hub running locally. Fixes from
    Phase 1 first: blocking approvals, Stop that stops, dead sessions shown dead.~~
 2. ~~Wispr-style pill, dictation, voice via Gemini Live with short-lived tokens.~~
-3. Hooks, so terminal and desktop-app Claude sessions join the roster.
-4. Hub on a small cloud host; sign-in and device pairing.
-5. Multi-user hardening and billing.
+3. axo as the secretary over Claude terminal sessions (see Next):
+   1. ~~the `axo claude` launcher and the session list~~ (the launcher is a
+      connector with one agent: it dials the hub with the token the app
+      leaves in `hub.json` in its app-data folder, and the hub routes that
+      session's instructions straight to it);
+   2. hooks for each session's state;
+   3. reading the history: last message, action log, diff;
+   4. the voice tools, talking and switching;
+   5. "bring in" for plain `claude` sessions.
+4. Hooks for desktop-app sessions: listed, read, answered when they pause.
+5. Hub on a small cloud host; sign-in and device pairing.
+6. Multi-user hardening and billing.
 
 ## Open decisions
 

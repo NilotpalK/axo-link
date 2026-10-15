@@ -14,12 +14,12 @@ const id = s.start({ label: 'smoke', cwd: os.tmpdir() });
 let turn = 1, asked = false;
 
 s.on('update', (l) => console.log(ms(), l[0].state.padEnd(8),
-  JSON.stringify((l[0].pending[0] || l[0].last || '').slice(0, 70))));
+  JSON.stringify((l[0].pending[0] || l[0].last || l[0].prompt || '').slice(0, 70))));
 s.on('waiting', (rec) => {
   if (rec.waiting_kind === 'approval_request') {
     asked = true;
     console.log(ms(), 'permission prompt arrived mid-turn -- approving');
-    if (!s.approve(id)) fail('could not answer the prompt');
+    if (!s.approve(id, rec.pending_ids)) fail('could not answer the prompt');
     return;
   }
   if (turn++ === 1) {

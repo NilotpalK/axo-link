@@ -6,6 +6,7 @@
     --state-waiting: #fbbf24;
     --state-error:   #f87171;
     --state-idle:    #64748b;
+    --state-done:    #60a5fa;
     --surface-pill:  rgba(18, 18, 22, 0.88);
     --border-pill:   rgba(255, 255, 255, 0.12);
     --text:          #e7e7ea;
@@ -63,7 +64,7 @@
 
   /* ---- the panel, opening upward ---- */
   #panel {
-    width: 400px; max-height: 380px; display: flex; flex-direction: column;
+    width: 400px; max-height: 396px; display: flex; flex-direction: column;   /* 460px window minus the bar */
     background: var(--surface-pill); border: 1px solid var(--border-pill);
     border-radius: 16px; backdrop-filter: blur(18px); overflow: hidden;
   }
@@ -93,6 +94,7 @@
   .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--state-idle); }
   .dot.running { background: var(--state-running); }
   .dot.waiting { background: var(--state-waiting); }
+  .dot.done    { background: var(--state-done); }
   .dot.error   { background: var(--state-error); }
   .head .label { font-weight: 600; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .head .dev { font-weight: 400; color: var(--text-dim); font-size: 10.5px; margin-left: 4px; }
@@ -125,7 +127,8 @@
   .act.no:hover { color: var(--state-error); border-color: var(--state-error); }
   #empty { color: var(--text-dim); text-align: center; padding: 26px 16px; line-height: 1.7; }
 
-  #settings { padding: 4px 16px 14px; }
+  #settings { flex: 1; min-height: 0; overflow-y: auto; padding: 4px 16px 14px; }
+  .note { color: var(--text-dim); font-size: 10.5px; line-height: 1.5; margin: -4px 0 4px; }
   .srow { display: flex; align-items: center; gap: 10px; padding: 7px 0; }
   .srow > span, .srow > label { flex: 1; }
   .srow select {
@@ -173,12 +176,17 @@
       <div id="meter" role="meter" aria-label="Microphone level" title="Speak: this bar should move"><i></i></div>
       <p id="mic-using" class="hint"></p>
       <div class="srow"><label for="speaker">Speaker</label><select id="speaker"></select></div>
+      <div class="srow"><span>Clean up dictation</span>
+        <div class="seg"><button data-clean="on">On</button><button data-clean="off">Off</button></div>
+      </div>
+      <p class="note">Removes "um"s and fixes punctuation. Adds about a second after you let go;
+        Off types your exact words straight away.</p>
       <div class="srow"><span>When an agent finishes</span>
         <div class="seg"><button data-mode="desk">Chime</button><button data-mode="away">Speak</button></div>
       </div>
       <div id="set-err" class="err" role="alert"></div>
-      <p class="hint">Hold a hotkey to talk, let go to send. Tap it to go hands-free; tap again to stop.
-        "Speak" is for when you're away from the desk; you can also just tell axo you're driving.</p>
+      <p class="hint">Hold a hotkey to talk; tap it for hands-free. "Speak" is for when you're away;
+        you can also just tell axo you're driving.</p>
     </div>
     <div id="compose"><input id="msg" placeholder="Select a session…" disabled></div>
   </div>
@@ -194,11 +202,14 @@
   const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
   let list = [], sel = null, tab = 'all', hubUp = true, settings = {};
+  // "waiting" means it needs a decision from you; a finished turn is just done
+  const needsYou = (s) => s.state === 'waiting' && s.waiting_kind !== 'finished';
+  const look = (s) => (s.state === 'waiting' && !needsYou(s) ? 'done' : s.state);
   let voice = 'idle', voiceMode = 'dictate', errMsg = '', errT, caption = '', speaking = false, previewing = false;
 
   /* ---------- the bar ---------- */
   function paint() {
-    const waiting = list.filter((s) => s.state === 'waiting').length;
+    const waiting = list.filter(needsYou).length;
     const b = document.body.classList;
     for (const c of [...b]) if (c.startsWith('v-')) b.remove(c);
     b.add('v-' + (speaking && voice === 'idle' ? 'speaking' : voice));
@@ -394,9 +405,9 @@
 
   function render() {
     paint();
-    const rank = { waiting: 0, running: 1, error: 2, idle: 3, exited: 4 };
-    const sorted = [...list].sort((a, b) => (rank[a.state] - rank[b.state]) || (a.since - b.since));
-    const waiting = sorted.filter((s) => s.state === 'waiting');
+    const rank = { waiting: 0, running: 1, done: 2, error: 3, idle: 4, exited: 5 };
+    const sorted = [...list].sort((a, b) => (rank[look(a)] - rank[look(b)]) || (a.since - b.since));
+    const waiting = sorted.filter(needsYou);
     const approvals = waiting.filter((s) => s.waiting_kind === 'approval_request').length;
     document.body.classList.toggle('tab-settings', tab === 'settings');
 
@@ -413,14 +424,16 @@
     $('#roster').innerHTML = shown.length ? shown.map((s) => {
       const approval = s.waiting_kind === 'approval_request';
       const kind = s.state === 'waiting' ? (KIND[s.waiting_kind] || 'waiting')
-        : s.state === 'exited' ? 'ended' : s.state;
-      return '<div class="row ' + (s.id === sel ? 'sel' : '') + '" data-id="' + s.id + '">' +
+        : s.state === 'exited' ? 'ended'
+        : s.state === 'idle' ? (s.kind === 'terminal' ? 'terminal' : 'ready') : s.state;
+      // every field from the roster is escaped, attributes included: it arrives over the network
+      return '<div class="row ' + (s.id === sel ? 'sel' : '') + '" data-id="' + esc(s.id) + '">' +
         '<div class="head">' +
-          '<i class="dot ' + s.state + '"></i>' +
+          '<i class="dot ' + esc(look(s)) + '"></i>' +
           '<span class="label">' + esc(s.label) +
             (s.device ? '<span class="dev">' + esc(s.device) + '</span>' : '') + '</span>' +
           '<span class="kind ' + (approval ? 'approval' : '') + '">' + esc(kind) + '</span>' +
-          (s.alive ? '<button class="x" data-stop="' + s.id + '" title="Stop" aria-label="Stop ' +
+          (s.alive ? '<button class="x" data-stop="' + esc(s.id) + '" title="Stop" aria-label="Stop ' +
             esc(s.label) + '">×</button>' : '') +
         '</div>' +
         '<div class="body">' +
@@ -428,10 +441,14 @@
           (s.did ? '<div class="did">did: ' + esc(s.did) + '</div>' : '') +
           (approval && s.pending && s.pending.length
             ? '<div class="pending">wants: ' + s.pending.map(esc).join('<br>') + '</div>' : '') +
-          (approval
+          (approval && s.kind === 'terminal'
+            ? '<div class="did">answer it in its terminal</div>'
+          : approval
             ? '<div class="acts">' +
-                '<button class="act ok" data-act="approve" data-id="' + s.id + '">Approve</button>' +
-                '<button class="act no" data-act="deny" data-id="' + s.id + '">Deny</button>' +
+                // Approve names the requests shown above it, so it can't approve one you never saw
+                '<button class="act ok" data-act="approve" data-id="' + esc(s.id) +
+                  '" data-asks="' + esc(JSON.stringify(s.pending_ids || [])) + '">Approve</button>' +
+                '<button class="act no" data-act="deny" data-id="' + esc(s.id) + '">Deny</button>' +
               '</div>' : '') +
         '</div>' +
       '</div>';
@@ -445,7 +462,11 @@
     }
     $('#add').onclick = async () => { const id = await axo.pick(); if (id) { sel = id; tab = 'all'; render(); } };
     for (const b of document.querySelectorAll('.acts button')) {
-      b.onclick = (e) => { e.stopPropagation(); axo[b.dataset.act](b.dataset.id); };
+      b.onclick = (e) => {
+        e.stopPropagation();
+        if (b.dataset.act === 'approve') axo.approve(b.dataset.id, JSON.parse(b.dataset.asks));
+        else axo.deny(b.dataset.id);
+      };
     }
     for (const b of document.querySelectorAll('.x')) {
       b.onclick = (e) => { e.stopPropagation(); axo.stop(b.dataset.stop); };
@@ -469,6 +490,7 @@
     $('#k-dictate').textContent = settings.dictate || '';
     $('#k-talk').textContent = settings.talk || '';
     for (const b of document.querySelectorAll('[data-mode]')) b.classList.toggle('on', b.dataset.mode === settings.mode);
+    for (const b of document.querySelectorAll('[data-clean]')) b.classList.toggle('on', (b.dataset.clean === 'on') === (settings.clean !== false));
   }
 
   // the window never takes focus on its own; typing a reply asks for it
@@ -493,6 +515,7 @@
     };
   }
   for (const b of document.querySelectorAll('[data-mode]')) b.onclick = () => axo.setMode(b.dataset.mode);
+  for (const b of document.querySelectorAll('[data-clean]')) b.onclick = () => axo.setClean(b.dataset.clean === 'on');
 
   /* ---------- mic and speaker pickers ---------- */
   async function devices() {
