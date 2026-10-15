@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "description": "Always-on-top pill that tells you when an agent is waiting on you.",
-  "main": "main.js",
+  "main": "app/main.js",
   "scripts": {
     "start": "electron .",
     "test": "node --test"
@@ -19,6 +19,6 @@
     "ws": "^8.22.0"
   },
   "bin": {
-    "axo": "axo.js"
+    "axo": "cli/axo.js"
   }
 }

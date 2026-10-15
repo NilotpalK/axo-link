@@ -9,8 +9,8 @@
 //   out: roster{agents}  hand{agent}  do{op, id, text?}  query{ref, op, id}
 //        error{id, msg}  reply{ref, ...}
 //
-//   AXO_TOKEN=… node hub.js                  (localhost only)
-//   AXO_HOST=0.0.0.0 AXO_TOKEN=… node hub.js (reachable from other machines)
+//   AXO_TOKEN=… node hub/hub.js                  (localhost only)
+//   AXO_HOST=0.0.0.0 AXO_TOKEN=… node hub/hub.js (reachable from other machines)
 const fs = require('node:fs');
 const path = require('node:path');
 const { parseEnv } = require('node:util');
@@ -20,7 +20,7 @@ const { timingSafeEqual } = require('node:crypto');
 /** KEY=value lines from the project's .env. They win over the PC's own
  *  environment -- the file is where this app's keys live -- but an empty value
  *  is skipped, so a blank placeholder never wipes out a working key. */
-function loadEnv(file = path.join(__dirname, '.env')) {
+function loadEnv(file = path.join(__dirname, '..', '.env')) {
   let text;
   try { text = fs.readFileSync(file, 'utf8'); } catch { return; }   // no .env: the environment alone
   for (const [k, v] of Object.entries(parseEnv(text))) if (v) process.env[k] = v;

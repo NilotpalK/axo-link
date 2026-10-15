@@ -6,7 +6,7 @@ const test = require('node:test');
 const assert = require('node:assert');
 const { EventEmitter, once } = require('node:events');
 const { startHub, plausible, loadEnv } = require('./hub');
-const { connect } = require('./link');
+const { connect } = require('../shared/link');
 
 // one machine's agents, plus a record of every instruction it was handed
 function machine(agent) {
