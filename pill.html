@@ -1,0 +1,569 @@
+<meta charset="utf-8">
+<title>axo-link</title>
+<style>
+  :root {
+    --state-running: #4ade80;
+    --state-waiting: #fbbf24;
+    --state-error:   #f87171;
+    --state-idle:    #64748b;
+    --state-done:    #60a5fa;
+    --surface-pill:  rgba(18, 18, 22, 0.88);
+    --border-pill:   rgba(255, 255, 255, 0.12);
+    --text:          #e7e7ea;
+    --text-dim:      #8b8b96;
+    --motion-quick:  150ms ease-out;
+    --motion-grow:   220ms cubic-bezier(.2, .8, .2, 1);
+  }
+  * { box-sizing: border-box; margin: 0; }
+  html, body { height: 100%; }
+  body {
+    font: 12px/1.45 system-ui, "Segoe UI", sans-serif;
+    color: var(--text); background: transparent;
+    overflow: hidden; user-select: none;
+  }
+  /* everything sits at the bottom centre; the rest of the window is click-through */
+  #stage {
+    height: 100%; display: flex; flex-direction: column;
+    justify-content: flex-end; align-items: center; gap: 8px; padding-bottom: 6px;
+  }
+
+  /* ---- the bar ---- */
+  #hit { padding: 6px 12px; cursor: pointer; }   /* a bigger target than the bar itself */
+  #bar {
+    height: 8px; width: 44px; border-radius: 999px;
+    display: flex; align-items: center; justify-content: center; gap: 8px;
+    background: var(--surface-pill); border: 1px solid var(--border-pill);
+    backdrop-filter: blur(18px); overflow: hidden; white-space: nowrap;
+    transition: width var(--motion-grow), height var(--motion-grow), background var(--motion-quick);
+  }
+  body.waiting #bar { background: rgba(251, 191, 36, .85); border-color: transparent; animation: pulse 1.4s ease-in-out infinite; }
+  #hit:hover #bar, body.open #bar { height: 30px; width: 170px; background: var(--surface-pill); border-color: var(--border-pill); animation: none; }
+  body.v-listening #bar, body.v-locked #bar { height: 34px; width: 190px; background: var(--surface-pill); animation: none; }
+  body.v-thinking #bar { height: 34px; width: 74px; background: var(--surface-pill); animation: none; }
+  body.v-speaking #bar, body.v-error #bar {
+    height: 34px; width: auto; min-width: 190px; max-width: 400px; padding: 0 16px;
+    background: var(--surface-pill); animation: none;
+  }
+  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .55; } }
+
+  #wave, #dots, #text { display: none; }
+  #wave { align-items: center; gap: 3px; height: 22px; }
+  #wave i { width: 3px; height: 4px; border-radius: 2px; background: var(--state-running); transition: height 90ms linear; }
+  body.v-listening #wave, body.v-locked #wave { display: flex; }
+  #dots { gap: 5px; }
+  #dots i { width: 6px; height: 6px; border-radius: 50%; background: var(--text-dim); animation: blink 1s infinite; }
+  #dots i:nth-child(2) { animation-delay: .15s; } #dots i:nth-child(3) { animation-delay: .3s; }
+  body.v-thinking #dots { display: flex; }
+  @keyframes blink { 0%, 100% { opacity: .3; } 50% { opacity: 1; } }
+  #text { font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; color: var(--text-dim); }
+  #hit:hover #text, body.open #text, body.v-listening #text, body.v-locked #text,
+  body.v-speaking #text, body.v-error #text { display: block; }
+  body.v-speaking #text { color: var(--text); }
+  body.v-error #text { color: var(--state-error); }
+  body.v-thinking #text { display: none; }
+
+  /* ---- the panel, opening upward ---- */
+  #panel {
+    width: 400px; max-height: 396px; display: flex; flex-direction: column;   /* 460px window minus the bar */
+    background: var(--surface-pill); border: 1px solid var(--border-pill);
+    border-radius: 16px; backdrop-filter: blur(18px); overflow: hidden;
+  }
+  body:not(.open) #panel { display: none; }
+  #tabs { flex: none; display: flex; align-items: center; gap: 4px; padding: 8px 10px 6px; }
+  .tab {
+    border: 0; background: transparent; color: var(--text-dim);
+    font: inherit; font-size: 11px; padding: 4px 9px; border-radius: 7px;
+    cursor: pointer; transition: color var(--motion-quick), background var(--motion-quick);
+  }
+  .tab:hover { color: var(--text); }
+  .tab.on { background: rgba(255, 255, 255, .08); color: var(--text); }
+  .tab .n { opacity: .7; }
+  .tab.alert .n { color: var(--state-waiting); opacity: 1; }
+  #add {
+    margin-left: auto; width: 22px; height: 22px; border-radius: 50%;
+    border: 1px solid var(--border-pill); background: transparent;
+    color: var(--text-dim); font-size: 14px; line-height: 1; cursor: pointer;
+  }
+  #add:hover { color: var(--text); border-color: var(--text-dim); }
+
+  #roster { flex: 1; overflow-y: auto; padding: 0 6px 4px; }
+  .row { padding: 8px 10px; border-radius: 10px; cursor: pointer; transition: background var(--motion-quick); }
+  .row:hover { background: rgba(255, 255, 255, .04); }
+  .row.sel   { background: rgba(255, 255, 255, .07); }
+  .head { display: flex; align-items: center; gap: 8px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--state-idle); }
+  .dot.running { background: var(--state-running); }
+  .dot.waiting { background: var(--state-waiting); }
+  .dot.done    { background: var(--state-done); }
+  .dot.error   { background: var(--state-error); }
+  .head .label { font-weight: 600; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .head .dev { font-weight: 400; color: var(--text-dim); font-size: 10.5px; margin-left: 4px; }
+  .kind { color: var(--text-dim); font-size: 10px; text-transform: uppercase; letter-spacing: .06em; white-space: nowrap; }
+  .kind.approval { color: var(--state-waiting); }
+  .x {
+    border: 0; background: transparent; color: var(--text-dim); cursor: pointer;
+    font-size: 14px; line-height: 1; padding: 0 2px; opacity: 0; transition: opacity var(--motion-quick);
+  }
+  .row:hover .x, .x:focus-visible { opacity: 1; }
+  .x:hover { color: var(--state-error); }
+  .body { padding-left: 16px; }
+  .summary {
+    font-size: 11px; margin-top: 3px;
+    display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
+  }
+  .did { color: var(--text-dim); font-size: 10.5px; margin-top: 3px; }
+  .pending {
+    margin-top: 5px; padding: 5px 8px; border-radius: 7px;
+    background: rgba(251, 191, 36, .10); border: 1px solid rgba(251, 191, 36, .22);
+    color: #f5d78e; font-family: ui-monospace, Consolas, monospace; font-size: 10.5px; word-break: break-all;
+  }
+  .acts { display: flex; gap: 6px; margin-top: 6px; }
+  button.act, .set button, .seg button {
+    font: inherit; font-size: 11px; padding: 4px 12px; border-radius: 7px; cursor: pointer;
+    border: 1px solid var(--border-pill); background: transparent; color: var(--text-dim);
+    transition: color var(--motion-quick), border-color var(--motion-quick);
+  }
+  .act.ok:hover { color: var(--state-running); border-color: var(--state-running); }
+  .act.no:hover { color: var(--state-error); border-color: var(--state-error); }
+  #empty { color: var(--text-dim); text-align: center; padding: 26px 16px; line-height: 1.7; }
+
+  #settings { flex: 1; min-height: 0; overflow-y: auto; padding: 4px 16px 14px; }
+  .note { color: var(--text-dim); font-size: 10.5px; line-height: 1.5; margin: -4px 0 4px; }
+  .srow { display: flex; align-items: center; gap: 10px; padding: 7px 0; }
+  .srow > span, .srow > label { flex: 1; }
+  .srow select {
+    max-width: 220px; font: inherit; font-size: 11px; padding: 4px 6px; border-radius: 7px;
+    border: 1px solid var(--border-pill); background: rgba(0, 0, 0, .30); color: var(--text); outline: none;
+  }
+  .srow select:focus { border-color: var(--text-dim); }
+  .srow select option { background: #1b1b20; }
+  #meter { height: 4px; border-radius: 2px; background: rgba(255, 255, 255, .08); margin: 0 0 4px; overflow: hidden; }
+  #meter i { display: block; height: 100%; width: 0; background: var(--state-running); transition: width 90ms linear; }
+  kbd { font: 11px ui-monospace, Consolas, monospace; color: var(--text); padding: 3px 7px; border-radius: 6px; background: rgba(255, 255, 255, .08); }
+  .set button:hover, .seg button:hover { color: var(--text); border-color: var(--text-dim); }
+  .seg { display: flex; }
+  .seg button { border-radius: 0; }
+  .seg button:first-child { border-radius: 7px 0 0 7px; }
+  .seg button:last-child { border-radius: 0 7px 7px 0; border-left: 0; }
+  .seg button.on { color: var(--text); background: rgba(255, 255, 255, .08); }
+  .err { color: var(--state-error); font-size: 13px; min-height: 0; }
+  .hint { color: var(--text-dim); font-size: 11px; margin-top: 6px; line-height: 1.6; }
+
+  #compose { flex: none; padding: 8px; border-top: 1px solid var(--border-pill); }
+  #compose input {
+    width: 100%; padding: 9px 12px; border-radius: 10px;
+    border: 1px solid var(--border-pill); background: rgba(0, 0, 0, .30);
+    color: var(--text); font: inherit; outline: none;
+  }
+  #compose input:focus { border-color: var(--text-dim); }
+  #compose input:disabled { opacity: .45; }
+  body.tab-settings #roster, body.tab-settings #compose { display: none; }
+  body:not(.tab-settings) #settings { display: none; }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation: none !important; transition: none !important; }
+  }
+</style>
+
+<div id="stage">
+  <div id="panel">
+    <div id="tabs"></div>
+    <div id="roster"></div>
+    <div id="settings" class="set">
+      <div class="srow"><span>Dictate</span><kbd id="k-dictate"></kbd><button data-rec="dictate">Change</button></div>
+      <div class="srow"><span>Talk to axo</span><kbd id="k-talk"></kbd><button data-rec="talk">Change</button></div>
+      <div class="srow"><label for="mic">Microphone</label><select id="mic"></select></div>
+      <div id="meter" role="meter" aria-label="Microphone level" title="Speak: this bar should move"><i></i></div>
+      <p id="mic-using" class="hint"></p>
+      <div class="srow"><label for="speaker">Speaker</label><select id="speaker"></select></div>
+      <div class="srow"><span>Clean up dictation</span>
+        <div class="seg"><button data-clean="on">On</button><button data-clean="off">Off</button></div>
+      </div>
+      <p class="note">Removes "um"s and fixes punctuation. Adds about a second after you let go;
+        Off types your exact words straight away.</p>
+      <div class="srow"><span>When an agent finishes</span>
+        <div class="seg"><button data-mode="desk">Chime</button><button data-mode="away">Speak</button></div>
+      </div>
+      <div id="set-err" class="err" role="alert"></div>
+      <p class="hint">Hold a hotkey to talk; tap it for hands-free. "Speak" is for when you're away;
+        you can also just tell axo you're driving.</p>
+    </div>
+    <div id="compose"><input id="msg" placeholder="Select a session…" disabled></div>
+  </div>
+  <div id="hit"><div id="bar" role="status" aria-live="polite">
+    <div id="wave"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+    <div id="dots"><i></i><i></i><i></i></div>
+    <span id="text"></span>
+  </div></div>
+</div>
+
+<script>
+  const $ = (s) => document.querySelector(s);
+  const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+  let list = [], sel = null, tab = 'all', hubUp = true, settings = {};
+  // "waiting" means it needs a decision from you; a finished turn is just done
+  const needsYou = (s) => s.state === 'waiting' && s.waiting_kind !== 'finished';
+  const look = (s) => (s.state === 'waiting' && !needsYou(s) ? 'done' : s.state);
+  let voice = 'idle', voiceMode = 'dictate', errMsg = '', errT, caption = '', speaking = false, previewing = false;
+
+  /* ---------- the bar ---------- */
+  function paint() {
+    const waiting = list.filter(needsYou).length;
+    const b = document.body.classList;
+    for (const c of [...b]) if (c.startsWith('v-')) b.remove(c);
+    b.add('v-' + (speaking && voice === 'idle' ? 'speaking' : voice));
+    b.toggle('waiting', waiting > 0);
+    $('#text').textContent =
+      voice === 'error' ? errMsg
+      : voice === 'listening' ? (voiceMode === 'dictate' ? 'Dictating' : 'axo is listening')
+      : voice === 'locked' ? (voiceMode === 'dictate' ? 'Dictating' : 'axo') + ' · hands-free'
+      : speaking ? caption.slice(-64)   // the newest words
+      : !hubUp ? 'no hub'
+      : (list.length ? list.length + (list.length === 1 ? ' agent' : ' agents') : 'no agents') +
+        (waiting ? ' · ' + waiting + ' waiting' : '') + (settings.mode === 'away' ? ' · away' : '');
+  }
+
+  $('#hit').onclick = () => { document.body.classList.toggle('open'); render(); };
+
+  // clicks pass through the window except over the bar and the open panel
+  let over = false, closeT;
+  document.addEventListener('mousemove', (e) => {
+    const now = !!e.target.closest('#hit, body.open #panel');
+    if (now === over) return;
+    over = now;
+    axo.hit(now);
+    clearTimeout(closeT);
+    // drifting away closes the panel, unless you're typing or picking in it
+    if (!now) closeT = setTimeout(() => {
+      if (!document.activeElement?.closest('#panel')) { document.body.classList.remove('open'); render(); }
+    }, 900);
+  });
+
+  /* ---------- mic: 16 kHz 16-bit PCM in 100 ms chunks ---------- */
+  // The mic runs at its own rate (usually 48 kHz) and this brings it down to
+  // 16 kHz itself: each output sample is the average of the input samples it
+  // spans. Asking for a 16 kHz AudioContext instead leaves the conversion to
+  // the browser -- one less thing to trust, after a mic gave pure silence.
+  const TAP = `registerProcessor('tap', class extends AudioWorkletProcessor {
+    constructor() {
+      super();
+      this.step = sampleRate / 16000; this.t = 0; this.sum = 0; this.n = 0;
+      this.buf = new Int16Array(1600); this.k = 0;
+    }
+    process([input]) {
+      const ch = input[0];
+      if (ch) for (let i = 0; i < ch.length; i++) {
+        this.sum += ch[i]; this.n++;
+        if (++this.t >= this.step) {
+          this.t -= this.step;
+          this.buf[this.k++] = Math.max(-1, Math.min(1, this.sum / this.n)) * 0x7fff;
+          this.sum = 0; this.n = 0;
+          if (this.k === this.buf.length) { this.port.postMessage(this.buf.slice()); this.k = 0; }
+        }
+      }
+      return true;
+    }
+  });`;
+  let mic = null, sending = false, micT, micFallback = false;
+  const levels = new Array(11).fill(0);
+  function level(data) {
+    let sum = 0;
+    for (let i = 0; i < data.length; i += 4) sum += data[i] * data[i];
+    // square root so quiet speech still shows; full scale is a loud voice up close
+    const v = Math.min(1, Math.sqrt(Math.sqrt(sum / (data.length / 4)) / 4000));
+    levels.push(v);
+    levels.shift();
+    document.querySelectorAll('#wave i').forEach((el, i) => { el.style.height = 4 + levels[i] * 18 + 'px'; });
+    $('#meter i').style.width = Math.round(v * 100) + '%';
+  }
+  /** open the mic once; audio only leaves the page while sending */
+  function micOpen() {
+    clearTimeout(micT);
+    // ponytail: the mic stays open a minute after use so the next press
+    // doesn't clip your first word; the OS mic light stays on that long
+    return (mic ??= (async () => {
+      const base = { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true };
+      let stream, why = '';
+      // exactly the mic you picked; if it can't open (asleep, on another
+      // machine), the default for now -- said out loud, and retried later
+      if (settings.mic) {
+        try { stream = await navigator.mediaDevices.getUserMedia({ audio: { ...base, deviceId: { exact: settings.mic } } }); }
+        catch (e) { why = e.name; }
+      }
+      stream ??= await navigator.mediaDevices.getUserMedia({ audio: base });
+      micFallback = !!why;
+      const ctx = new AudioContext();   // the device's own rate; TAP converts
+      await ctx.audioWorklet.addModule(URL.createObjectURL(new Blob([TAP], { type: 'text/javascript' })));
+      const node = new AudioWorkletNode(ctx, 'tap');
+      node.port.onmessage = ({ data }) => {
+        level(data);
+        if (sending) axo.audio(new Uint8Array(data.buffer));
+      };
+      ctx.createMediaStreamSource(stream).connect(node);
+      // say which mic this really is: a "default" can be a virtual one sending silence
+      const label = stream.getAudioTracks()[0]?.label || 'an unnamed microphone';
+      $('#mic-using').textContent = 'Using ' + label +
+        (micFallback ? ' — your pick could not be opened (' + why + '), will retry' : '');
+      axo.micLabel(label);
+      return { stream, ctx };
+    })().catch((e) => { mic = null; throw e; }));
+  }
+  function micOn() {
+    if (micFallback) closeMic();   // stuck on the default: try your pick again
+    sending = true;
+    return micOpen();
+  }
+  function closeMic() {
+    if (!mic || sending) return;
+    const m = mic;
+    mic = null;
+    m.then(({ stream, ctx }) => { stream.getTracks().forEach((t) => t.stop()); ctx.close(); }, () => {});
+  }
+  function micOff() {
+    sending = false;
+    clearTimeout(micT);
+    micT = setTimeout(closeMic, 60000);
+  }
+
+  /* ---------- speaker: axo's 24 kHz voice, and the chimes ---------- */
+  let out, at = 0, playing = new Set(), captionT;
+  const sink = () => (out?.setSinkId
+    ? out.setSinkId(settings.speaker || '').catch(() => out.setSinkId(''))   // unplugged -> default
+    : Promise.resolve());
+  const speaker = () => { if (!out) { out = new AudioContext({ sampleRate: 24000 }); sink(); } return out; };
+  function play(b64) {
+    const ctx = speaker();
+    const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+    const pcm = new Int16Array(bytes.buffer, 0, bytes.length >> 1);
+    const buf = ctx.createBuffer(1, pcm.length, 24000);
+    const ch = buf.getChannelData(0);
+    for (let i = 0; i < pcm.length; i++) ch[i] = pcm[i] / 0x8000;
+    const src = ctx.createBufferSource();
+    src.buffer = buf;
+    src.connect(ctx.destination);
+    at = Math.max(at, ctx.currentTime);
+    src.start(at);
+    at += buf.duration;
+    playing.add(src);
+    clearTimeout(captionT);
+    if (!speaking) { speaking = true; paint(); }
+    src.onended = () => {
+      playing.delete(src);
+      if (!playing.size) captionT = setTimeout(() => { speaking = false; caption = ''; paint(); }, 1200);
+    };
+  }
+  function flush() {
+    for (const s of playing) { s.onended = null; s.stop(); }
+    playing.clear();
+    at = 0;
+    speaking = false;
+    caption = '';
+    paint();
+  }
+  function chime(kind) {
+    const ctx = speaker();
+    const notes = { start: [660, 880], stop: [880, 660], hand: [740, 988] }[kind];
+    notes.forEach((f, i) => {
+      const o = ctx.createOscillator(), g = ctx.createGain(), t = ctx.currentTime + i * 0.09;
+      o.frequency.value = f;
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(0.12, t + 0.01);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.12);
+      o.connect(g).connect(ctx.destination);
+      o.start(t);
+      o.stop(t + 0.13);
+    });
+  }
+
+  axo.on('voice', (v) => {
+    const wasOn = voice === 'listening' || voice === 'locked';
+    voice = v.state;
+    voiceMode = v.mode || voiceMode;
+    const on = voice === 'listening' || voice === 'locked';
+    if (on) {
+      micOn().catch((e) => { voice = 'error'; errMsg = 'microphone: ' + e.message; paint(); });
+      if (!wasOn) chime('start');
+    } else {
+      micOff();
+      if (wasOn) chime('stop');
+    }
+    if (voice === 'error') {
+      errMsg = v.msg || errMsg;
+      clearTimeout(errT);
+      errT = setTimeout(() => { if (voice === 'error') { voice = 'idle'; paint(); } }, 6000);
+    }
+    paint();
+  });
+  axo.on('play', play);
+  axo.on('flush', flush);
+  axo.on('caption', (t) => { caption += t; paint(); });
+  axo.on('chime', chime);
+
+  /* ---------- the panel ---------- */
+  const KIND = { approval_request: 'needs approval', question: 'asked you', finished: 'done' };
+
+  function render() {
+    paint();
+    const rank = { waiting: 0, running: 1, done: 2, error: 3, idle: 4, exited: 5 };
+    const sorted = [...list].sort((a, b) => (rank[look(a)] - rank[look(b)]) || (a.since - b.since));
+    const waiting = sorted.filter(needsYou);
+    const approvals = waiting.filter((s) => s.waiting_kind === 'approval_request').length;
+    document.body.classList.toggle('tab-settings', tab === 'settings');
+
+    $('#tabs').innerHTML = [
+      ['all', 'All', list.length, false],
+      ['waiting', 'Waiting', waiting.length, approvals > 0],
+      ['settings', 'Settings', null, false],
+    ].map(([k, name, n, alert]) =>
+      '<button class="tab ' + (tab === k ? 'on ' : '') + (alert ? 'alert' : '') + '" data-tab="' + k + '">' +
+      name + (n === null ? '' : ' <span class="n">' + n + '</span>') + '</button>'
+    ).join('') + '<button id="add" title="Start an agent in a folder" aria-label="Start an agent in a folder">+</button>';
+
+    const shown = tab === 'waiting' ? waiting : sorted;
+    $('#roster').innerHTML = shown.length ? shown.map((s) => {
+      const approval = s.waiting_kind === 'approval_request';
+      const kind = s.state === 'waiting' ? (KIND[s.waiting_kind] || 'waiting')
+        : s.state === 'exited' ? 'ended'
+        : s.state === 'idle' ? (s.kind === 'terminal' ? 'terminal' : 'ready') : s.state;
+      // every field from the roster is escaped, attributes included: it arrives over the network
+      return '<div class="row ' + (s.id === sel ? 'sel' : '') + '" data-id="' + esc(s.id) + '">' +
+        '<div class="head">' +
+          '<i class="dot ' + esc(look(s)) + '"></i>' +
+          '<span class="label">' + esc(s.label) +
+            (s.device ? '<span class="dev">' + esc(s.device) + '</span>' : '') + '</span>' +
+          '<span class="kind ' + (approval ? 'approval' : '') + '">' + esc(kind) + '</span>' +
+          (s.alive ? '<button class="x" data-stop="' + esc(s.id) + '" title="Stop" aria-label="Stop ' +
+            esc(s.label) + '">×</button>' : '') +
+        '</div>' +
+        '<div class="body">' +
+          (s.summary ? '<div class="summary">' + esc(s.summary) + '</div>' : '') +
+          (s.did ? '<div class="did">did: ' + esc(s.did) + '</div>' : '') +
+          (approval && s.pending && s.pending.length
+            ? '<div class="pending">wants: ' + s.pending.map(esc).join('<br>') + '</div>' : '') +
+          (approval && s.kind === 'terminal'
+            ? '<div class="did">answer it in its terminal</div>'
+          : approval
+            ? '<div class="acts">' +
+                // Approve names the requests shown above it, so it can't approve one you never saw
+                '<button class="act ok" data-act="approve" data-id="' + esc(s.id) +
+                  '" data-asks="' + esc(JSON.stringify(s.pending_ids || [])) + '">Approve</button>' +
+                '<button class="act no" data-act="deny" data-id="' + esc(s.id) + '">Deny</button>' +
+              '</div>' : '') +
+        '</div>' +
+      '</div>';
+    }).join('')
+      : '<div id="empty">' + (tab === 'waiting'
+          ? 'Nothing waiting on you.'
+          : 'No agents yet.<br>Hit + to start one in a folder.') + '</div>';
+
+    for (const t of document.querySelectorAll('.tab')) {
+      t.onclick = () => { tab = t.dataset.tab; render(); if (tab === 'settings') devices(); };
+    }
+    $('#add').onclick = async () => { const id = await axo.pick(); if (id) { sel = id; tab = 'all'; render(); } };
+    for (const b of document.querySelectorAll('.acts button')) {
+      b.onclick = (e) => {
+        e.stopPropagation();
+        if (b.dataset.act === 'approve') axo.approve(b.dataset.id, JSON.parse(b.dataset.asks));
+        else axo.deny(b.dataset.id);
+      };
+    }
+    for (const b of document.querySelectorAll('.x')) {
+      b.onclick = (e) => { e.stopPropagation(); axo.stop(b.dataset.stop); };
+    }
+    for (const row of document.querySelectorAll('.row')) row.onclick = () => { sel = row.dataset.id; render(); };
+
+    const cur = list.find((s) => s.id === sel);
+    $('#msg').disabled = !cur || !cur.alive;
+    // a reply while it waits on approval is "no -- do this instead"
+    $('#msg').placeholder = !cur ? 'Select a session…'
+      : !cur.alive ? cur.label + ' has ended'
+      : cur.waiting_kind === 'approval_request' ? 'Or tell ' + cur.label + ' what to do instead…'
+      : 'Reply to ' + cur.label + '…';
+
+    // the Settings tab doubles as a mic test: the meter moves while it's open
+    const preview = tab === 'settings' && document.body.classList.contains('open');
+    if (preview && !previewing) micOpen().catch((e) => { $('#set-err').textContent = 'Microphone: ' + e.message; });
+    else if (!preview && previewing) closeMic();
+    previewing = preview;
+
+    $('#k-dictate').textContent = settings.dictate || '';
+    $('#k-talk').textContent = settings.talk || '';
+    for (const b of document.querySelectorAll('[data-mode]')) b.classList.toggle('on', b.dataset.mode === settings.mode);
+    for (const b of document.querySelectorAll('[data-clean]')) b.classList.toggle('on', (b.dataset.clean === 'on') === (settings.clean !== false));
+  }
+
+  // the window never takes focus on its own; typing a reply asks for it
+  $('#msg').onmousedown = () => { axo.focus(true); setTimeout(() => $('#msg').focus(), 50); };
+  $('#msg').onblur = () => axo.focus(false);
+  $('#msg').onkeydown = (e) => {
+    if (e.key === 'Escape') return $('#msg').blur();
+    if (e.key !== 'Enter' || !sel || !e.target.value.trim()) return;
+    axo.send(sel, e.target.value.trim());
+    e.target.value = '';
+  };
+
+  for (const b of document.querySelectorAll('[data-rec]')) {
+    b.onclick = async () => {
+      $('#set-err').textContent = '';
+      b.textContent = 'Press keys…';
+      const r = await axo.record(b.dataset.rec);
+      b.textContent = 'Change';
+      $('#set-err').textContent = r.error || '';
+      settings = r;
+      render();
+    };
+  }
+  for (const b of document.querySelectorAll('[data-mode]')) b.onclick = () => axo.setMode(b.dataset.mode);
+  for (const b of document.querySelectorAll('[data-clean]')) b.onclick = () => axo.setClean(b.dataset.clean === 'on');
+
+  /* ---------- mic and speaker pickers ---------- */
+  async function devices() {
+    let all = await navigator.mediaDevices.enumerateDevices();
+    // device names stay hidden until the mic has been opened once
+    if (all.some((d) => d.kind === 'audioinput' && !d.label)) {
+      try {
+        (await navigator.mediaDevices.getUserMedia({ audio: true })).getTracks().forEach((t) => t.stop());
+        all = await navigator.mediaDevices.enumerateDevices();
+      } catch { /* no permission: list unnamed devices */ }
+    }
+    const fill = (sel, kind, cur) => {
+      // Windows adds 'default' and 'communications' aliases; "System default" covers them
+      const real = all.filter((d) => d.kind === kind && d.deviceId !== 'default' && d.deviceId !== 'communications');
+      sel.innerHTML = '<option value="">System default</option>' + real.map((d, i) =>
+        '<option value="' + esc(d.deviceId) + '"' + (d.deviceId === cur ? ' selected' : '') + '>' +
+        esc(d.label || (kind === 'audioinput' ? 'Microphone ' : 'Speaker ') + (i + 1)) + '</option>').join('');
+    };
+    fill($('#mic'), 'audioinput', settings.mic);
+    fill($('#speaker'), 'audiooutput', settings.speaker);
+  }
+  navigator.mediaDevices.ondevicechange = () => {
+    if (tab === 'settings') devices();
+    // your pick may have just connected (Bluetooth takes a moment)
+    if (micFallback && !sending) {
+      closeMic();
+      if (previewing) micOpen().catch((e) => { $('#set-err').textContent = 'Microphone: ' + e.message; });
+    }
+  };
+  for (const kind of ['mic', 'speaker']) {
+    const sel = $('#' + kind);
+    sel.onmousedown = () => axo.focus(true);   // a dropdown needs the window focused
+    sel.onchange = () => { axo.setDevice(kind, sel.value); axo.focus(false); };
+    sel.onblur = () => axo.focus(false);
+  }
+
+  axo.on('sessions', (l) => { list = l; render(); });
+  axo.on('link', (up) => { hubUp = up; paint(); });
+  axo.on('settings', (s) => {
+    const was = settings;
+    settings = s;
+    if (s.mic !== was.mic) {   // reopen on the new mic
+      closeMic();
+      if (previewing) micOpen().catch((e) => { $('#set-err').textContent = 'Microphone: ' + e.message; });
+    }
+    if (s.speaker !== was.speaker) { speaker(); sink().then(() => chime('start')); }   // a ping on the new speaker
+    render();
+  });
+  axo.list().then((l) => { list = l; render(); });
+  axo.settings().then((s) => { settings = s; render(); });
+</script>

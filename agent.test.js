@@ -6,7 +6,7 @@ const test = require('node:test');
 const assert = require('node:assert');
 const { PassThrough } = require('node:stream');
 const { EventEmitter } = require('node:events');
-const { Sessions, brief } = require('../src/helpers/agent');
+const { Sessions, brief } = require('./agent');
 
 function fakeSpawn() {
   const child = new EventEmitter();
@@ -64,20 +64,82 @@ test('turn end settles to waiting, with what it did and a spoken-length brief', 
   assert.match(child.written.join(''), /"content":"do the thing"/);
 });
 
-test('permission_denials mark the session as needing approval, and say for what', async () => {
-  const { rec } = await turn([
-    assistant('I need to remove the old migration.', ['Bash']),
-    line({
-      type: 'result', is_error: false,
-      result: 'I could not delete the migration without permission.',
-      permission_denials: [
-        { tool_name: 'Bash', tool_use_id: 't1', tool_input: { command: 'rm -rf ./migrations/old' } },
-      ],
-    }),
-  ]);
+const ask = (id, tool, input) => line({
+  type: 'control_request', request_id: id,
+  request: { subtype: 'can_use_tool', tool_name: tool, input },
+});
+const answered = (child) => child.written.splice(0).join('').trim().split('\n').map((l) => JSON.parse(l).response);
 
+test('a permission prompt pauses the turn as an approval, and approve answers it in place', async () => {
+  const { rec, s, id, child } = await turn([
+    assistant('I need to remove the old migration.', ['Bash']),
+    ask('r1', 'Bash', { command: 'rm -rf ./migrations/old' }),
+  ]);
   assert.equal(rec.waiting_kind, 'approval_request');
   assert.deepEqual(rec.pending, ['Bash(rm -rf ./migrations/old)']);
+  assert.deepEqual(rec.pending_ids, ['r1']);
+  assert.equal(rec.summary, 'I need to remove the old migration.');
+
+  child.written.length = 0;
+  assert.equal(s.approve(id, ['r1']), true);
+  assert.deepEqual(answered(child), [{
+    subtype: 'success', request_id: 'r1',
+    response: { behavior: 'allow', updatedInput: { command: 'rm -rf ./migrations/old' } },
+  }]);
+  const after = s.list()[0];
+  assert.equal(after.state, 'running', 'same turn carries on, no new turn sent');
+  assert.deepEqual(after.pending, []);
+  assert.equal(s.approve(id, ['r1']), false, 'nothing left to approve');
+});
+
+test('approve only allows the exact requests you were shown, and shows them in full', async () => {
+  const long = 'npm run build && ' + 'node scripts/migrate.js --step '.repeat(4) + '--force';
+  const { s, id, child } = await turn([ask('r1', 'Bash', { command: long })]);
+  assert.equal(s.list()[0].pending[0], `Bash(${long})`, 'the whole command, not a 60-character preview');
+
+  // a second request arrives after you read the first: a yes to r1 alone allows nothing
+  const second = nextEvent(s, 'update');
+  child.stdout.write(ask('r2', 'Bash', { command: 'rm -rf build' }));
+  await second;
+  child.written.length = 0;
+  assert.equal(s.approve(id, ['r1']), false);
+  assert.equal(s.approve(id), false, 'no ids, no approval');
+  assert.equal(child.written.length, 0, 'nothing was sent to the agent');
+  assert.equal(s.approve(id, ['r2', 'r1']), true, 'naming both, in any order');
+});
+
+test('typing back during an approval denies it with your words; deny alone says no', async () => {
+  const { s, id, child } = await turn([ask('r1', 'Bash', { command: 'rm x' })]);
+  child.written.length = 0;
+  assert.equal(s.send(id, 'use git rm instead'), true);
+  const [r] = answered(child);
+  assert.equal(r.request_id, 'r1');
+  assert.deepEqual(r.response, { behavior: 'deny', message: 'use git rm instead' });
+
+  const again = nextEvent(s, 'waiting');
+  child.stdout.write(ask('r2', 'Bash', { command: 'rm y' }));
+  await again;
+  s.deny(id);
+  const [d] = answered(child);
+  assert.equal(d.request_id, 'r2');
+  assert.match(d.response.message, /Denied/);
+});
+
+test('cancelled prompts clear, and unknown control requests are refused, not left hanging', async () => {
+  const { s, child } = await turn([ask('r1', 'Bash', { command: 'x' })]);
+  const cleared = nextEvent(s, 'update');
+  child.stdout.write(line({ type: 'control_cancel_request', request_id: 'r1' }));
+  await cleared;
+  assert.equal(s.list()[0].state, 'running');
+  assert.deepEqual(s.list()[0].pending, []);
+
+  child.written.length = 0;
+  const replied = new Promise((r) => child.stdin.once('data', r));
+  child.stdout.write(line({ type: 'control_request', request_id: 'q9', request: { subtype: 'mcp_message' } }));
+  await replied;
+  const [r] = answered(child);
+  assert.equal(r.subtype, 'error');
+  assert.equal(r.request_id, 'q9');
 });
 
 test('a trailing question mark makes it a question, not a finished turn', async () => {
@@ -85,23 +147,6 @@ test('a trailing question mark makes it a question, not a finished turn', async 
     line({ type: 'result', is_error: false, result: 'Should I apply the migration to staging?' }),
   ]);
   assert.equal(rec.waiting_kind, 'question');
-});
-
-test('approve continues the same session instead of starting a new one', async () => {
-  const { rec, s, id, child } = await turn([
-    line({
-      type: 'result', is_error: false, result: 'Blocked.',
-      permission_denials: [{ tool_name: 'Bash', tool_use_id: 't1', tool_input: { command: 'rm x' } }],
-    }),
-  ]);
-  assert.equal(rec.waiting_kind, 'approval_request');
-
-  assert.equal(s.approve(id), true);
-  const after = s.list()[0];
-  assert.equal(after.state, 'running');
-  assert.equal(after.waiting_kind, null, 'stale approval must not linger');
-  assert.deepEqual(after.pending, []);
-  assert.match(child.written.join(''), /Approved/);
 });
 
 test('a failed turn lands in error, not waiting', async () => {
@@ -124,8 +169,21 @@ test('a crash surfaces stderr instead of a silent idle dot', async () => {
   await settled;
   const rec = s.list()[0];
   assert.equal(rec.state, 'error');
+  assert.equal(rec.alive, false);
   assert.match(rec.last, /not recognized/);
   assert.equal(s.send(id, 'hello'), false, 'dead session refuses input');
+});
+
+test('stop ends the session as ended, not as a crash, and it shows as dead', () => {
+  const s = new Sessions(fakeSpawn);
+  const id = s.start({ label: 'test' });
+  const child = fakeSpawn.last;
+  child.kill = () => child.emit('exit', 1);   // a killed tree exits nonzero on Windows
+  assert.equal(s.stop(id), true);
+  const rec = s.list()[0];
+  assert.equal(rec.state, 'exited');
+  assert.equal(rec.alive, false);
+  assert.equal(s.send(id, 'hello'), false);
 });
 
 test('brief() stops at two sentences and never runs on forever', () => {

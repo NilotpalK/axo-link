@@ -1,10 +1,12 @@
 # axo-link
 
-An always-on-top pill that **tells you out loud** when an agent is waiting on
-you, and lets you answer by voice — so you stop polling tabs.
+A Wispr Flow-style bar at the bottom of your screen that tells you when an
+agent is waiting on you, so you stop polling tabs.
 
 Agents run as local CLI processes. The pill watches them, says what each one
-did, and takes your next instruction without you opening a chat window.
+did, and lets you send the next instruction without opening a chat window —
+by typing, or by holding a hotkey and talking. The same hotkey dictates into
+any app.
 
 ## How it works
 
@@ -28,45 +30,57 @@ Three things are derived from it:
 | Field | From | Used for |
 |---|---|---|
 | `did` | `tool_use` blocks, tallied | "Read, Edit ×3, Bash ×2" |
-| `summary` | first two sentences of `result` | what gets spoken and shown |
-| `waiting_kind` | `permission_denials` / trailing `?` | `approval_request` · `question` · `finished` |
+| `summary` | first two sentences of `result` | what gets spoken/shown |
+| `waiting_kind` | `control_request` / trailing `?` | `approval_request` · `question` · `finished` |
 
-`result.permission_denials` is the CLI's own authoritative record of what it
-was blocked from doing, so the approval tab needs no MCP server, no socket, and
-no second process.
+Approvals happen mid-turn. With `--permission-prompt-tool stdio`, anything
+`acceptEdits` won't auto-allow arrives on stdout as a `control_request`
+(`can_use_tool`) and the CLI pauses until a `control_response` goes back down
+stdin. Approve lets the same turn carry on; typing a reply instead denies it
+with your words ("no, use git rm"). No MCP server, no second process.
 
-## Voice
+### The hub
 
-**It talks.** When a session settles, `speak.js` reads the line out through
-macOS `say` — no key, no network, no latency:
+Every machine runs the app; every app dials out to one hub and keeps a
+WebSocket open. Connectors report their agents, the hub merges them into one
+roster, and instructions go back down the socket of whichever machine owns the
+agent. Nothing dials in, so it works behind home and office routers. See
+[docs/architecture.md](docs/architecture.md) for where this is going.
 
-```
-"axo-link needs approval. Ran Edit 2 times, Bash.
- I could not delete the stale build output without permission.
- Wants to run Bash rm -rf ./build."
-```
+### Voice
 
-The queue is serial, so two agents finishing together take turns instead of
-talking over each other.
+| Hold | Does |
+|---|---|
+| `Ctrl` + `Win` | dictate: let go and the text is typed into whatever app has focus |
+| `Ctrl` + `Win` + `Alt` | talk to axo, the secretary: "what did I miss?", "approve it", "I'm driving" |
 
-**You talk back.** `F13` opens the mic (and cuts off whatever is speaking).
-It closes itself after ~1.2s of trailing silence, transcribes through OpenAI
-(`gpt-4o-mini-transcribe`), and the text becomes the next turn.
+Tap instead of holding to go hands-free; tap again to stop. Both chords are
+Wispr's defaults and can be changed under Settings in the pill.
 
-**There is no intent parser, on purpose.** `approve()` and `deny()` were always
-just `send()` with canned English, and the thing receiving it is an LLM. So
-"yeah go ahead" and "no, use redis instead" are both simply the next turn —
-no command grammar, no classifier, no routing pass.
+Dictation is cleaned up the way Wispr does it: fillers out, self-corrections
+applied ("Friday, no wait, Thursday" → "Thursday"), punctuation fixed — your
+words, not a rewrite. The hub runs it through `gemini-3.5-flash-lite`, about a
+second. A question you dictate comes back as the question, never an answer; if
+the result looks like an answer or rewrite anyway, or takes over 3 s, your
+exact words are pasted instead. Settings → *Clean up dictation* turns it off.
 
-### Which session hears you
+At the desk an agent finishing is a chime and an amber bar, and axo only
+speaks when you hold the key. Switch to **away** (Settings, or tell axo you're
+driving) and it says each update out loud as it happens.
 
-Resolved once, when the mic opens, so it can't shift mid-sentence:
+"Read me the whole thing" -- an agent's full last message, or a terminal's
+screen -- goes through a text-to-speech model (`gemini-3.8-flash-lite-tts`,
+same voice as axo), because axo's conversational voice keeps things short and
+may reword. Every word is read, in order; only Markdown marks are dropped. It
+starts after about 4 s and any hotkey stops it. The free tier allows 10 speech
+requests a day, about two long messages, so this wants billing turned on
+(about 3 cents for a 3-minute read).
 
-1. whatever just spoke — you are answering what you heard
-2. the only thing waiting, if there is exactly one
-3. whatever is selected in the pill
-
-The pill shows the target while listening (`→ axo-link`), so it is never a guess.
+Both voices are Gemini Live sessions (`gemini-3.5-transcribe-live` for
+dictation, `gemini-3.8-live` for axo). The app never holds the Gemini key: it
+asks the hub for a one-use token per session. axo acts through six tools —
+`agents`, `reply`, `approve`, `deny`, `stop`, `set_mode` — and reads a command
+back before approving it.
 
 ## Run
 
@@ -74,20 +88,76 @@ Needs Node 22+ and the `claude` CLI installed and logged in.
 
 ```bash
 npm install
-npm run dev          # vite + electron, hot reload
-npm start            # build the renderer, then run
 ```
-
-Hit `+` to pick a folder and start an agent in it. Click the pill to expand.
-
-Voice replies need an OpenAI key. Either export it:
 
 ```bash
-export OPENAI_API_KEY=sk-...
+npm start
 ```
 
-or press `F13` once and paste it into the prompt — it is stored encrypted by
-your OS keychain via Electron's `safeStorage`, not in a dotfile.
+Click the bar to open the panel; `+` picks a folder and starts an agent in it.
+Alone, the app hosts its own hub on `127.0.0.1:7777`.
+
+**Claude in your terminal.** Once, from this folder, make `axo` a command:
+
+```bash
+npm link
+```
+
+Then, in any terminal, in any project, start Claude through axo:
+
+```bash
+axo claude
+```
+
+It's the real Claude Code, untouched, and any `claude` arguments work after
+it. The session shows up in the pill (marked *terminal*), axo lists it, and
+"tell deskill to run the tests" -- or typing in the pill's box -- types into
+that terminal as if you had. Start it before or after the app; it finds the
+app either way. Live state and "what exactly did it do" come next (see
+[docs/architecture.md](docs/architecture.md)).
+
+**Voice** needs a Gemini API key where the hub runs. Put it in a `.env` file in
+this folder -- copy `.env.example` to `.env` and fill in `GEMINI_API_KEY=`.
+`.env` is git-ignored, and its values win over the PC's own environment
+variables (a blank one is ignored). The other settings below can go there too.
+
+**First run on a Mac** asks for three permissions in System Settings →
+Privacy & Security, for the terminal you ran `npm start` from: **Microphone**,
+**Input Monitoring** (global hotkeys) and **Accessibility** (typing the
+dictation in). Grant them and restart the app. The chords there are
+`Ctrl` + `Cmd` to dictate and `Ctrl` + `Cmd` + `Option` to talk to axo.
+
+**No sound getting through?** Open Settings in the pill and speak: the green
+bar under Microphone should move, and the line under it names the mic in use.
+A "default" mic can be a virtual one — WO Mic, Krisp, a camera app — that
+sends pure silence when its source isn't running; pick a real one from the
+list. Each recording also logs a line like
+`[voice] talk: 2.3s of audio, peak 41%`; a peak of 0–1% is silence. Still
+silent on Windows: Settings → Privacy & security → Microphone → *Let desktop
+apps access your microphone*. On a Mac: System Settings → Privacy & Security →
+Microphone → your terminal app.
+
+**More machines.** On the machine that hosts the hub, set a token and open
+it to the network (`setx` values apply to new terminals):
+
+```bash
+setx AXO_TOKEN "pick-a-long-random-string"
+```
+
+```bash
+setx AXO_HOST "0.0.0.0"
+```
+
+On every other machine, point at it with the same token:
+
+```bash
+setx AXO_HUB "ws://home-pc:7777"
+```
+
+`AXO_DEVICE` overrides the machine name shown in the pill. Every connection
+to the hub needs the token, on localhost too; without `AXO_TOKEN` the app makes
+a random one each run that only it knows. Connections from web pages are
+refused outright. `AXO_TOKEN=… node hub.js` runs the hub standalone.
 
 ## Checks
 
@@ -95,65 +165,56 @@ your OS keychain via Electron's `safeStorage`, not in a dotfile.
 npm test
 ```
 
-23 tests: turn settling, the `did` tally, `waiting_kind` classification,
-approve-continues-the-session, crash surfacing, the spoken line, speak-queue
-ordering, and the silence gate.
+Twenty-four tests. Against a fake CLI: turn settling, the `did` tally,
+`waiting_kind`, mid-turn approve/deny, approvals bound to the requests shown,
+cancelled prompts, crash vs. stop. Against a real hub: one roster across
+machines, routing to the owning machine, offline reported, wrong tokens and
+odd messages shut out without a crash, browsers refused, malformed agents
+dropped, reconnecting to a hub that starts late, voice tokens. `axo claude`
+end to end with a stand-in for claude: listed, typed into, stopped. The hotkey
+machine: hold, tap for hands-free, Ctrl+Win → +Alt switch, stale recordings,
+other shortcuts left alone, chord recording. axo's tools: right agent,
+approvals must name their requests, nonsense refused.
 
 ```bash
-node smoke.js         # drives the real `claude` binary through two turns
-node smoke-voice.js   # says a line, then round-trips `say` → webm → OpenAI → text
+node smoke.js
 ```
 
-The live checks exist because unit tests can't catch the CLI changing its
-protocol, `say` going missing, or the transcription endpoint changing shape.
+The live check: drives the real `claude` binary through two turns, the second
+needing a permission prompt, and prints PASS if the prompt pauses the turn and
+approving resumes it. Run this after `claude login` — the unit tests can't
+catch the CLI changing its protocol out from under the parser.
 
 ## Files
 
-```
-main.js                     app lifecycle, the waiting → notify + speak reaction
-preload.js                  context bridge
-src/helpers/                main process
-  agent.js                  spawn, NDJSON parse, state machine
-  windowConfig.js           pill geometry, always-on-top, work-area clamping
-  speak.js                  serial TTS queue over `say`
-  voice.js                  hotkey, mic permission, target routing
-  transcribe.js             OpenAI BYOK (Groq is a 4-line swap)
-  secrets.js                safeStorage-backed key storage
-  ipc.js                    every ipcMain handler
-src/renderer/               React + Vite + Tailwind
-  App.jsx, components/, hooks/useMic.js, utils/
-resources/mac/              entitlements
-test/, smoke.js, smoke-voice.js
-```
-
-Vendors are a plain object in `agent.js` — `codex` and `cursor-agent` are two
-more entries with different args, not a class hierarchy.
+| File | |
+|---|---|
+| `agent.js` | spawn, NDJSON parse, state machine, mid-turn approvals. Vendors are a plain object, not a class hierarchy |
+| `hub.js` | the hub: merged roster, routing, token check, heartbeat |
+| `link.js` | the app's one outbound socket: connector + pill, request/reply, redials forever |
+| `axo.js` | `axo claude`: the real Claude Code in a pseudo-terminal, registered with the hub so axo can list and type into it |
+| `keys.js` | global hold-to-talk hotkeys: the state machine, plus the OS keyboard hook |
+| `voice.js` | the two Gemini Live sessions (dictation, axo) and axo's tools |
+| `main.js` | Electron main: hosts the hub unless `AXO_HUB` is set, the click-through window, paste, settings, IPC |
+| `pill.html` | the whole UI, one file: the bar, mic and speaker, panel, settings |
+| `preload.js` | context bridge |
 
 ## Scope
 
-In: session roster, spoken turn-end briefs, the waiting tab, approve/deny,
-voice and typed replies.
+In: one roster across machines, what-it-did briefs, the waiting tab, mid-turn
+approve/deny, reply box, stop, dictation into any app, a voice secretary with
+desk and away modes.
 
-Deliberately out, with the trigger for adding each:
+Deliberately out, with the trigger for adding each (order in
+[docs/architecture.md](docs/architecture.md)):
 
-- **Local whisper.cpp** — add when offline or privacy actually bites.
-  `transcribe.js` is a one-function seam; a local provider slots in beside the
-  cloud one.
-- **Hold-to-talk on the Globe key** — add when the toggle's auto-stop starts
-  clipping you. Costs a Swift helper, a `swiftc` build step, and an Input
-  Monitoring permission.
-- **Blocking approvals** — today the agent hits a permission wall, *stops*, and
-  reports; Approve sends "go ahead" as the next turn. The real-time version is
-  `--permission-prompt-tool` pointed at an MCP `approve` tool returning
-  `{"behavior":"allow"}`, which pauses the CLI mid-turn until you answer.
-- **codex / cursor vendors** — two more `VENDORS` entries, but neither binary is
-  installed here, so the protocol can't be verified. Add them with a picker.
-- **Router/WebSocket split** — add when the phone client is real. IPC now; the
-  intents already have the same shape either way.
+- **Cloud hub, sign-in, device pairing** — when someone other than you uses it.
+  Today it's one shared token.
+- **Hooks for sessions you started yourself** — when you want terminal and
+  desktop-app Claude sessions in the roster too.
 
-`--permission-mode acceptEdits` means agents edit files without asking, and a
-headless run silently *denies* anything it can't auto-accept. That's what the
-approval tab surfaces.
+`--permission-mode acceptEdits` means agents edit files without asking;
+everything else comes to the pill as an approval.
 
 ## Credits
 
@@ -162,12 +223,3 @@ behaviour — was worked out by reading
 [OpenMausBot](https://github.com/milind-soni/OpenMausBot)'s
 `server/drivers/claude.ts` (Apache-2.0), then verified against the shipping
 `claude` binary's own schema.
-
-The voice layer's hard-won parts are lifted from
-[OpenWhispr](https://github.com/openwhispr/openwhispr) (MIT) — the speech gate
-and its thresholds, the RMS meter, the waveform curve, the recorder graph
-(including the muted-gain trick, without which the analyser reads flat zeros
-forever), and the macOS overlay behaviour: `skipTransformProcessType`, and
-clamping window bounds to the display's work area rather than flooring at zero.
-Each lifted file names its origin at the top. OpenWhispr has no TTS — that half
-is `say`.

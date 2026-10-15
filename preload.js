@@ -1,29 +1,24 @@
 'use strict';
 const { contextBridge, ipcRenderer } = require('electron');
 
+// the only channels main pushes to the pill
+const EVENTS = new Set(['sessions', 'link', 'voice', 'play', 'flush', 'caption', 'chime', 'settings']);
+
 contextBridge.exposeInMainWorld('axo', {
-  // Returns an unsubscribe so a remounting renderer can't stack listeners.
-  onSessions: (cb) => {
-    const h = (_e, list) => cb(list);
-    ipcRenderer.on('sessions', h);
-    return () => ipcRenderer.off('sessions', h);
-  },
+  on: (channel, cb) => EVENTS.has(channel) && ipcRenderer.on(channel, (_e, v) => cb(v)),
   list: () => ipcRenderer.invoke('list'),
   pick: () => ipcRenderer.invoke('pick'),
   send: (id, text) => ipcRenderer.invoke('send', id, text),
-  approve: (id) => ipcRenderer.invoke('approve', id),
+  approve: (id, asks) => ipcRenderer.invoke('approve', id, asks),
   deny: (id) => ipcRenderer.invoke('deny', id),
   stop: (id) => ipcRenderer.invoke('stop', id),
-  resize: (expanded) => ipcRenderer.send('resize', expanded),
-
-  // --- voice ---
-  select: (id) => ipcRenderer.send('select', id),
-  onMic: (cb) => {
-    const h = (_e, payload) => cb(payload);
-    ipcRenderer.on('mic', h);
-    return () => ipcRenderer.off('mic', h);
-  },
-  voice: (targetId, audio) => ipcRenderer.invoke('voice', targetId, audio),
-  hasKey: () => ipcRenderer.invoke('has-key'),
-  setKey: (key) => ipcRenderer.invoke('set-key', key),
+  settings: () => ipcRenderer.invoke('settings'),
+  record: (mode) => ipcRenderer.invoke('record', mode),
+  setMode: (mode) => ipcRenderer.invoke('mode', mode),
+  setDevice: (kind, id) => ipcRenderer.invoke('device', kind, id),
+  setClean: (on) => ipcRenderer.invoke('clean', on),
+  audio: (bytes) => ipcRenderer.send('audio', bytes),
+  micLabel: (label) => ipcRenderer.send('miclabel', label),
+  hit: (over) => ipcRenderer.send('hit', over),
+  focus: (on) => ipcRenderer.send('focus', on),
 });
