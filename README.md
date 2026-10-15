@@ -113,7 +113,9 @@ It's the real Claude Code, untouched, and any `claude` arguments work after
 it. The session shows up in the pill (marked *terminal*), axo lists it, and
 "tell deskill to run the tests" -- or typing in the pill's box -- types into
 that terminal as if you had. Start it before or after the app; it finds the
-app either way. Live state and "what exactly did it do" come next (see
+app either way. Claude Code hooks keep its state live (working, done,
+waiting on you) and keep its last message whole for "read me what it said".
+"What exactly did it do" comes next (see
 [docs/architecture.md](docs/architecture.md)).
 
 **Voice** needs a Gemini API key where the hub runs. Put it in a `.env` file in
@@ -157,7 +159,7 @@ setx AXO_HUB "ws://home-pc:7777"
 `AXO_DEVICE` overrides the machine name shown in the pill. Every connection
 to the hub needs the token, on localhost too; without `AXO_TOKEN` the app makes
 a random one each run that only it knows. Connections from web pages are
-refused outright. `AXO_TOKEN=… node hub.js` runs the hub standalone.
+refused outright. `AXO_TOKEN=… node hub/hub.js` runs the hub standalone.
 
 ## Checks
 
@@ -165,7 +167,7 @@ refused outright. `AXO_TOKEN=… node hub.js` runs the hub standalone.
 npm test
 ```
 
-Twenty-four tests. Against a fake CLI: turn settling, the `did` tally,
+Thirty tests, next to the code they check. Against a fake CLI: turn settling, the `did` tally,
 `waiting_kind`, mid-turn approve/deny, approvals bound to the requests shown,
 cancelled prompts, crash vs. stop. Against a real hub: one roster across
 machines, routing to the owning machine, offline reported, wrong tokens and
@@ -177,7 +179,7 @@ other shortcuts left alone, chord recording. axo's tools: right agent,
 approvals must name their requests, nonsense refused.
 
 ```bash
-node smoke.js
+node scripts/smoke.js
 ```
 
 The live check: drives the real `claude` binary through two turns, the second
@@ -187,17 +189,25 @@ catch the CLI changing its protocol out from under the parser.
 
 ## Files
 
+One folder per thing that runs. Each test sits next to the file it checks.
+
 | File | |
 |---|---|
-| `agent.js` | spawn, NDJSON parse, state machine, mid-turn approvals. Vendors are a plain object, not a class hierarchy |
-| `hub.js` | the hub: merged roster, routing, token check, heartbeat |
-| `link.js` | the app's one outbound socket: connector + pill, request/reply, redials forever |
-| `axo.js` | `axo claude`: the real Claude Code in a pseudo-terminal, registered with the hub so axo can list and type into it |
-| `keys.js` | global hold-to-talk hotkeys: the state machine, plus the OS keyboard hook |
-| `voice.js` | the two Gemini Live sessions (dictation, axo) and axo's tools |
-| `main.js` | Electron main: hosts the hub unless `AXO_HUB` is set, the click-through window, paste, settings, IPC |
-| `pill.html` | the whole UI, one file: the bar, mic and speaker, panel, settings |
-| `preload.js` | context bridge |
+| **`hub/`** | **the backend: what gets hosted later** |
+| `hub/hub.js` | merged roster, routing, token check, heartbeat, voice tokens, dictation clean-up, read-aloud speech, question relay |
+| **`app/`** | **the Electron companion app on each PC** |
+| `app/main.js` | Electron main: hosts the hub unless `AXO_HUB` is set, the click-through window, paste, settings, IPC |
+| `app/pill.html` | the whole UI, one file: the bar, mic and speaker, panel, settings |
+| `app/preload.js` | context bridge |
+| `app/voice.js` | the two Gemini Live sessions (dictation, axo) and axo's tools |
+| `app/keys.js` | global hold-to-talk hotkeys: the state machine, plus the OS keyboard hook |
+| **`cli/`** | **the `axo` command** |
+| `cli/axo.js` | `axo claude`: the real Claude Code in a pseudo-terminal, registered with the hub, state from its hooks |
+| **`shared/`** | **used by the app and the CLI** |
+| `shared/link.js` | the one outbound socket to the hub: connector + pill, request/reply, redials forever |
+| `shared/agent.js` | pill-started sessions: spawn, NDJSON parse, state machine, mid-turn approvals. Vendors are a plain object, not a class hierarchy |
+| **`scripts/`** | |
+| `scripts/smoke.js` | the live check against the real `claude` binary |
 
 ## Scope
 

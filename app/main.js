@@ -3,10 +3,10 @@ const { app, BrowserWindow, ipcMain, dialog, screen, clipboard, ClipboardItem, s
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
-const { Sessions } = require('./agent');
-const { startHub, loadEnv } = require('./hub');
+const { Sessions } = require('../shared/agent');
+const { startHub, loadEnv } = require('../hub/hub');
 loadEnv();   // GEMINI_API_KEY and friends, from .env, before anything reads them
-const { connect } = require('./link');
+const { connect } = require('../shared/link');
 const { hotkeys, invalid, label, hook } = require('./keys');
 const { dictation, secretary, toolRunner, update, speakable } = require('./voice');
 
@@ -204,7 +204,7 @@ function createWindow() {
   });
   win.setAlwaysOnTop(true, 'screen-saver');   // above fullscreen apps too
   win.setIgnoreMouseEvents(true, { forward: true });
-  win.loadFile('pill.html');
+  win.loadFile(path.join(__dirname, 'pill.html'));
   win.once('ready-to-show', () => win.showInactive());
 }
 

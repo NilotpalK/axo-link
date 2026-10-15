@@ -12,8 +12,8 @@ const os = require('node:os');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
 const { EventEmitter, once } = require('node:events');
-const { startHub } = require('./hub');
-const { connect } = require('./link');
+const { startHub } = require('../hub/hub');
+const { connect } = require('../shared/link');
 const { stateMachine } = require('./axo');
 
 const until = (pred, ms) => new Promise((resolve, reject) => {

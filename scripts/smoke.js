@@ -3,9 +3,9 @@
 // process survive to take a second turn, and does a permission prompt pause
 // the turn until we answer it? agent.test.js proves the parsing with a fake;
 // this proves the CLI still behaves the way the parser assumes.
-//   node smoke.js
+//   node scripts/smoke.js
 const os = require('node:os');
-const { Sessions } = require('./agent');
+const { Sessions } = require('../shared/agent');
 
 const s = new Sessions();
 const t0 = Date.now();
