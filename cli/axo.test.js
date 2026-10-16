@@ -14,7 +14,7 @@ const { spawn } = require('node:child_process');
 const { EventEmitter, once } = require('node:events');
 const { startHub } = require('../hub/hub');
 const { connect } = require('../shared/link');
-const { stateMachine } = require('./axo');
+const { stateMachine, drafts, keyBytes } = require('./axo');
 
 const until = (pred, ms) => new Promise((resolve, reject) => {
   const t0 = Date.now();
@@ -26,10 +26,40 @@ const until = (pred, ms) => new Promise((resolve, reject) => {
   })();
 });
 
+test('what is typed into the prompt and not sent, counted as the keys arrive', () => {
+  const d = drafts();
+  d.typed('ab');
+  assert.equal(d.left(), 2);
+  d.typed('\x7f\b');
+  assert.equal(d.left(), 0, 'backspace, either byte');
+  d.typed('\x1b[200~abc\x1b[201~');
+  assert.equal(d.left(), 3, "a paste counts its text, not the terminal's markers around it");
+  d.typed('\x7f\x7f\x7f');
+  assert.equal(d.left(), 0, 'and rubbing it out empties the prompt');
+  d.typed('\x1b[200~line one\r');
+  d.typed('line two\x1b[201~');
+  assert.equal(d.left(), 17, 'a paste over two chunks, the Enter inside it just text');
+  d.typed('\x1b[A\x1b[B\x1bb');
+  assert.equal(d.left(), 17, 'arrows and Alt+key type nothing');
+  d.typed('\r');
+  assert.equal(d.left(), 0, 'Enter sends it');
+  d.typed('half\x03');
+  assert.equal(d.left(), 0, 'Ctrl+C clears it');
+});
+
+test('axo presses only keys it knows by name, never what an object inherits', () => {
+  assert.equal(keyBytes('Down'), '\x1b[B');
+  assert.equal(keyBytes('7'), '7');
+  for (const k of ['constructor', '__proto__', 'toString', 'hasOwnProperty', 'ctrl+c', 'ab', '']) {
+    assert.equal(keyBytes(k), null, k);
+  }
+});
+
 // Stands in for claude: reads its hook address from --settings, the way Claude
 // Code does, reads keys raw like a TUI (Enter submits, Ctrl+J is a new line),
-// and for each prompt submitted fires the hooks a real turn would. "ask" stops
-// at a permission prompt; "fail" ends on an API error.
+// and for each prompt submitted fires the hooks a real turn would. Typing
+// "race" puts up a permission prompt the moment the word lands, before any
+// Enter; "fail" ends on an API error.
 const FAKE = `
 const http = require('node:http');
 const fs = require('node:fs');
@@ -59,12 +89,12 @@ process.stdin.on('data', async (d) => {
     line = '';
     console.log('GOT<' + JSON.stringify(said) + '>');
     await post('UserPromptSubmit', { prompt: said });
-    if (said === 'ask') { await post('PermissionRequest', { tool_name: 'Bash', tool_input: { command: 'rm -rf build' } }); continue; }
     if (said === 'fail') { await post('StopFailure', { error: 'rate_limit', error_details: '429 Too Many Requests' }); continue; }
     await post('PostToolUse', { tool_name: 'Edit', tool_input: {} });
     await post('PostToolUse', { tool_name: 'Edit', tool_input: {} });
     await post('Stop', { last_assistant_message: 'Done with "' + said + '". All 3 tests pass.' });
   }
+  if (line === 'race') await post('PermissionRequest', { tool_name: 'Bash', tool_input: { command: 'rm -rf build' } });
 });
 `;
 
@@ -115,6 +145,7 @@ test('axo claude: listed, typed into, followed through its hooks, its screen rea
     onMessage: (m) => seen.push(m),
   });
   const latest = () => seen.findLast((m) => m.t === 'roster')?.agents.find((a) => a.kind === 'terminal');
+  const keysSeen = () => (screen.match(/KEYS</g) || []).length;   // chunks of keys the stand-in has read
   try {
     const s = await until(latest, 15000);
     assert.equal(s.label, path.basename(dir), 'named after the folder it was started in');
@@ -145,18 +176,28 @@ test('axo claude: listed, typed into, followed through its hooks, its screen rea
     await until(() => screen.includes('GOT<"line one\\nline two">'), 15000);
     await until(() => latest()?.last === 'Done with "line one\nline two". All 3 tests pass.', 15000);
 
-    // a permission prompt is up: typed words or keys could answer it, so neither goes in
-    await pill.do('send', s.id, 'ask');
+    // a permission prompt comes up while axo is typing: it stops before the Enter, which would answer it
+    await assert.rejects(pill.do('send', s.id, 'race'), /permission prompt while I was typing, so I didn't press Enter/);
+    await new Promise((r) => setTimeout(r, 400));
+    assert.ok(!screen.includes('GOT<"race">'), 'no Enter reached it');
     await until(() => latest()?.waiting_kind === 'approval_request', 15000);
+    // while it's up, typed words or keys could answer it, so neither goes in
     await assert.rejects(pill.do('send', s.id, 'yes'), /permission prompt/);
     await assert.rejects(pill.do('press', s.id, ['enter']), /permission prompt/);
     launcher.stdin.write('\x1b');   // you press Esc to decline it, and no hook says so
     await until(() => latest()?.state === 'idle', 15000);
+    // axo's unsent word is still in the prompt, so nothing goes on top of it
+    await assert.rejects(pill.do('send', s.id, 'more'), /half-typed/);
+    const before = keysSeen();
+    launcher.stdin.write('\x7f\x7f\x7f\x7f');   // until you rub it out
+    await until(() => keysSeen() > before, 15000);
 
     // keys for a menu, one at a time, and only the ones axo may press
     await pill.do('press', s.id, ['down', 'up']);
     await until(() => screen.includes('KEYS<27,91,66>') && screen.includes('KEYS<27,91,65>'), 15000);
-    await assert.rejects(pill.do('press', s.id, ['ctrl+c']), /no key called/);
+    for (const k of ['ctrl+c', 'constructor', '__proto__']) {
+      await assert.rejects(pill.do('press', s.id, [k]), /no key called/, k);
+    }
 
     // an API error ends the turn: it shows as failed, and raises its hand
     await pill.do('send', s.id, 'fail');
