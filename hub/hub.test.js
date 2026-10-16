@@ -13,7 +13,13 @@ function machine(agent) {
   const s = new EventEmitter();
   s.told = [];
   s.list = () => [agent];
-  for (const op of ['send', 'approve', 'deny', 'stop']) s[op] = (id, text) => s.told.push([op, id, text]);
+  for (const op of ['send', 'approve', 'deny', 'stop']) {
+    s[op] = (id, text) => {
+      s.told.push([op, id, text]);
+      if (text === 'not now') throw new Error('something is half-typed there');   // a machine saying why not
+      return true;
+    };
+  }
   return s;
 }
 
@@ -44,14 +50,13 @@ test('one roster across machines; instructions land on the machine that owns the
   const r = await until(() => seen.findLast((m) => m.t === 'roster' && m.agents.length === 2));
   assert.deepEqual(r.agents.map((a) => `${a.label}@${a.device}`).sort(), ['claude 1@Home PC', 'codex@Office PC']);
 
-  homeLink.do('approve', 'b1');   // the home pill approves the office agent
-  await until(() => office.told.length);
+  // the home pill approves the office agent, and hears back once it's done
+  assert.equal((await homeLink.do('approve', 'b1')).ok, true);
   assert.deepEqual(office.told, [['approve', 'b1', undefined]]);
   assert.deepEqual(home.told, []);
 
-  homeLink.do('send', 'gone', 'hello');
-  const err = await until(() => seen.find((m) => m.t === 'error'));
-  assert.match(err.msg, /offline/);
+  await assert.rejects(homeLink.do('send', 'b1', 'not now'), /half-typed there/, "the machine's reason comes back");
+  await assert.rejects(homeLink.do('send', 'gone', 'hello'), /offline/);
 
   officeLink.close();             // a machine dropping off takes its agents with it
   await until(() => seen.findLast((m) => m.t === 'roster')?.agents.length === 1);

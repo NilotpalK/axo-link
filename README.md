@@ -114,9 +114,16 @@ it. The session shows up in the pill (marked *terminal*), axo lists it, and
 "tell deskill to run the tests" -- or typing in the pill's box -- types into
 that terminal as if you had. Start it before or after the app; it finds the
 app either way. Claude Code hooks keep its state live (working, done,
-waiting on you) and keep its last message whole for "read me what it said".
-"What exactly did it do" comes next (see
+waiting on you, failed on an API error) and keep its last message whole for
+"read me what it said". "What exactly did it do" comes next (see
 [docs/architecture.md](docs/architecture.md)).
+
+What it won't do: type on top of something you've half-typed in that
+terminal, or type anything while a permission prompt is up there (your words
+could answer it). It says so instead, and axo tells you. Multi-line messages
+go in as one prompt. For menus and pickers ("pick the second session"), axo
+reads the screen and presses the keys -- arrows, Enter, Esc, letters and
+digits, nothing else. Esc while it's working interrupts it.
 
 **Voice** needs a Gemini API key where the hub runs. Put it in a `.env` file in
 this folder -- copy `.env.example` to `.env` and fill in `GEMINI_API_KEY=`.
@@ -172,11 +179,14 @@ Thirty tests, next to the code they check. Against a fake CLI: turn settling, th
 cancelled prompts, crash vs. stop. Against a real hub: one roster across
 machines, routing to the owning machine, offline reported, wrong tokens and
 odd messages shut out without a crash, browsers refused, malformed agents
-dropped, reconnecting to a hub that starts late, voice tokens. `axo claude`
-end to end with a stand-in for claude: listed, typed into, stopped. The hotkey
-machine: hold, tap for hands-free, Ctrl+Win → +Alt switch, stale recordings,
-other shortcuts left alone, chord recording. axo's tools: right agent,
-approvals must name their requests, nonsense refused.
+dropped, reconnecting to a hub that starts late, voice tokens, instructions
+answered with done or why not. `axo claude` end to end with a stand-in for
+claude that reads raw keys like a TUI: listed, typed into, multi-line, refused
+over half-typed text and over a permission prompt, Esc noticed, menu keys,
+API errors, stopped. The hotkey machine: hold, tap for hands-free,
+Ctrl+Win → +Alt switch, stale recordings, other shortcuts left alone, chord
+recording. axo's tools: right agent, approvals must name their requests, ok
+only once it happened, nonsense refused.
 
 ```bash
 node scripts/smoke.js

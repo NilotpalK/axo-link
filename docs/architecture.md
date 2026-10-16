@@ -121,8 +121,14 @@ sequenceDiagram
 | Has a window | no, the pill is its window | yes, your terminal | yes, its own |
 | Knows when it's waiting | yes | yes (hooks) | yes (hooks) |
 | Talk to it any time | yes | yes | no: only when it pauses, in away mode; or "bring it in" |
-| Approve / deny | yes | yes | yes, while the hook is held |
-| Built | yes | next | after |
+| Approve / deny | yes | in its terminal for now (see below) | yes, while the hook is held |
+| Built | yes | yes | after |
+
+Answering a launched session's permission prompt from axo is open. The
+documented route is the PermissionRequest hook returning a decision, but the
+docs don't say whether the prompt still shows in the terminal while the hook
+holds its answer -- and if it doesn't, the person at the desk would be locked
+out until axo decides. Settle that with one live test before building it.
 
 Codex: spawned works; attached is notify-only (`notify` in `config.toml`).
 
@@ -248,7 +254,9 @@ Wispr Flow's interaction, pointed at agents as well as text fields.
       connector with one agent: it dials the hub with the token the app
       leaves in `hub.json` in its app-data folder, and the hub routes that
       session's instructions straight to it);
-   2. hooks for each session's state;
+   2. ~~hooks for each session's state~~ (plus the gaps after: failed turns,
+      Esc noticed, no typing over a half-typed line or a permission prompt,
+      multi-line, keys for menus, instructions answered with done or why not);
    3. reading the history: last message, action log, diff;
    4. the voice tools, talking and switching;
    5. "bring in" for plain `claude` sessions.

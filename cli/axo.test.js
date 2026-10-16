@@ -27,7 +27,9 @@ const until = (pred, ms) => new Promise((resolve, reject) => {
 });
 
 // Stands in for claude: reads its hook address from --settings, the way Claude
-// Code does, then for each line typed in fires the hooks a real turn would.
+// Code does, reads keys raw like a TUI (Enter submits, Ctrl+J is a new line),
+// and for each prompt submitted fires the hooks a real turn would. "ask" stops
+// at a permission prompt; "fail" ends on an API error.
 const FAKE = `
 const http = require('node:http');
 const fs = require('node:fs');
@@ -44,14 +46,25 @@ const post = (event, extra = {}, { path = url.pathname, origin } = {}) => new Pr
   console.log('ORIGIN<' + await post('Stop', {}, { origin: 'https://example.com' }) + '>');
   console.log('fake ready');
 })();
+if (process.stdin.isTTY) process.stdin.setRawMode(true);
 process.stdin.setEncoding('utf8');
+let line = '';
 process.stdin.on('data', async (d) => {
-  const line = d.trim();
-  console.log('GOT<' + line + '>');
-  await post('UserPromptSubmit', { prompt: line });
-  await post('PostToolUse', { tool_name: 'Edit', tool_input: {} });
-  await post('PostToolUse', { tool_name: 'Edit', tool_input: {} });
-  await post('Stop', { last_assistant_message: 'Done with "' + line + '". All 3 tests pass.' });
+  console.log('KEYS<' + [...d].map((c) => c.charCodeAt(0)).join(',') + '>');
+  if (d.startsWith('\\x1b')) return;   // arrows, Esc
+  for (const ch of d) {
+    if (ch === '\\x7f' || ch === '\\b') { line = line.slice(0, -1); continue; }
+    if (ch !== '\\r') { line += ch; continue; }
+    const said = line;
+    line = '';
+    console.log('GOT<' + JSON.stringify(said) + '>');
+    await post('UserPromptSubmit', { prompt: said });
+    if (said === 'ask') { await post('PermissionRequest', { tool_name: 'Bash', tool_input: { command: 'rm -rf build' } }); continue; }
+    if (said === 'fail') { await post('StopFailure', { error: 'rate_limit', error_details: '429 Too Many Requests' }); continue; }
+    await post('PostToolUse', { tool_name: 'Edit', tool_input: {} });
+    await post('PostToolUse', { tool_name: 'Edit', tool_input: {} });
+    await post('Stop', { last_assistant_message: 'Done with "' + said + '". All 3 tests pass.' });
+  }
 });
 `;
 
@@ -69,6 +82,13 @@ test('a session moves through its states as the hooks report them', () => {
   assert.equal(states[3].last, 'Rebuilt. Want me to deploy it?');
   assert.equal(states[3].waiting_kind, 'question');
   assert.equal(states[3].did, 'Bash');
+
+  // an API error ends the turn with StopFailure instead of Stop
+  on({ hook_event_name: 'UserPromptSubmit', prompt: 'again' });
+  on({ hook_event_name: 'StopFailure', error: 'overloaded', error_details: '529 Overloaded' });
+  assert.equal(states[5].state, 'error');
+  assert.equal(states[5].summary, 'the turn failed (overloaded: 529 Overloaded)');
+  assert.equal(states[5].last, undefined, "its last words aren't wiped when the error carries none");
 });
 
 test('axo claude: listed, typed into, followed through its hooks, its screen read, stopped', async () => {
@@ -102,8 +122,15 @@ test('axo claude: listed, typed into, followed through its hooks, its screen rea
     assert.ok(screen.includes('BAD<404>'), 'wrong secret: turned away');
     assert.ok(screen.includes('ORIGIN<404>'), 'a browser: turned away');
 
-    pill.do('send', s.id, 'hello   there');
-    await until(() => screen.includes('GOT<hello there>'), 15000);   // typed, then submitted with Enter
+    // you've half-typed something in the terminal: axo doesn't type on top of it
+    launcher.stdin.write('ab');
+    await until(() => /KEYS<[\d,]*98>/.test(screen), 15000);
+    await assert.rejects(pill.do('send', s.id, 'hello'), /half-typed/);
+    launcher.stdin.write('\x7f\x7f');   // and rubbed it out
+    await until(() => /KEYS<(8|127)\b/.test(screen), 15000);
+
+    assert.equal((await pill.do('send', s.id, 'hello   there')).ok, true, 'ok once it is typed in');
+    await until(() => screen.includes('GOT<"hello there">'), 15000);   // typed, then submitted with Enter
 
     const done = await until(() => latest()?.state === 'waiting' && latest(), 15000);
     assert.equal(done.waiting_kind, 'finished');
@@ -113,11 +140,35 @@ test('axo claude: listed, typed into, followed through its hooks, its screen rea
     assert.equal(done.claude_session, 'S1', "Claude's own session id, taken from its events");
     assert.ok(seen.some((m) => m.t === 'hand'), 'a finished turn raises its hand');
 
+    // more than one line goes in as one prompt, lines kept
+    await pill.do('send', s.id, 'line one\n  line two');
+    await until(() => screen.includes('GOT<"line one\\nline two">'), 15000);
+    await until(() => latest()?.last === 'Done with "line one\nline two". All 3 tests pass.', 15000);
+
+    // a permission prompt is up: typed words or keys could answer it, so neither goes in
+    await pill.do('send', s.id, 'ask');
+    await until(() => latest()?.waiting_kind === 'approval_request', 15000);
+    await assert.rejects(pill.do('send', s.id, 'yes'), /permission prompt/);
+    await assert.rejects(pill.do('press', s.id, ['enter']), /permission prompt/);
+    launcher.stdin.write('\x1b');   // you press Esc to decline it, and no hook says so
+    await until(() => latest()?.state === 'idle', 15000);
+
+    // keys for a menu, one at a time, and only the ones axo may press
+    await pill.do('press', s.id, ['down', 'up']);
+    await until(() => screen.includes('KEYS<27,91,66>') && screen.includes('KEYS<27,91,65>'), 15000);
+    await assert.rejects(pill.do('press', s.id, ['ctrl+c']), /no key called/);
+
+    // an API error ends the turn: it shows as failed, and raises its hand
+    await pill.do('send', s.id, 'fail');
+    const failed = await until(() => latest()?.state === 'error' && latest(), 15000);
+    assert.equal(failed.summary, 'the turn failed (rate_limit: 429 Too Many Requests)');
+    assert.ok(seen.some((m) => m.t === 'hand' && m.agent.state === 'error'));
+
     // asked from another machine, through the hub
     const shot = await pill.ask({ t: 'query', op: 'screen', id: s.id });
-    assert.match(shot.text, /GOT<hello there>/);
+    assert.match(shot.text, /GOT<"fail">/);
 
-    pill.do('stop', s.id);
+    await pill.do('stop', s.id);
     await exited;
     await until(() => !latest(), 5000);
   } finally {
