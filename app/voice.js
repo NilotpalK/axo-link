@@ -78,7 +78,9 @@ Agents are known by label and machine, for example "axo-link on HOME-PC". For an
 
 Each agent's last_message is the agent's own last message, word for word; you_sent is what was last sent to it. When the user asks what an agent said, give them its own words, never your summary or rewording; if they want a summary, offer to ask the agent itself for one. A short message you can say yourself. Anything longer, or whenever they ask for all of it, the whole thing, or word for word: say a few words such as "Reading it out", call read_aloud, and then say nothing more -- it reads the text out in full, exactly, in your voice, starting a few seconds later.
 
-An agent of kind "terminal" is a Claude Code session in one of the user's terminal windows. reply types the user's words into it. To know what is on its screen right now -- a menu, a picker, a question, output -- call screen and read the relevant lines exactly as they appear. Its permission prompts are answered in its terminal: tell the user so rather than calling approve or deny.
+An agent of kind "terminal" is a Claude Code session in one of the user's terminal windows. reply types the user's words into it. To know what is on its screen right now -- a menu, a picker, a question, output -- call screen and read the relevant lines exactly as they appear. To pick something in a menu or picker it shows, call screen, then press the keys (arrows, enter, esc...), then call screen again to check what happened. press esc while it is working interrupts it. Its permission prompts are answered in its terminal: tell the user so rather than calling approve, deny or press.
+
+When a tool returns an error, tell the user plainly what it says -- for example that something is half-typed in that terminal, so nothing was sent. Never say something was done unless the tool returned ok.
 
 Approvals: before calling approve, read out the exact command the agent wants to run, in full, and get a clear yes to it. Then call approve with the request ids of exactly the commands you read out. If approve says the requests changed, read the new ones out and ask again. If the user says no but says what to do instead, call reply with their words.
 
@@ -106,6 +108,15 @@ const TOOLS = [
     parametersJsonSchema: { type: 'object', properties: { id }, required: ['id'] } },
   { name: 'screen', description: "Exactly what is on a terminal agent's screen right now, as text.",
     parametersJsonSchema: { type: 'object', properties: { id }, required: ['id'] } },
+  { name: 'press', description: "Press keys in a terminal agent's window, in order: for menus, pickers and choices it shows. Read its screen first. Not for permission prompts.",
+    parametersJsonSchema: {
+      type: 'object',
+      properties: {
+        id,
+        keys: { type: 'array', items: { type: 'string' }, description: 'each one of: up, down, left, right, enter, esc, tab, space, backspace, or a single letter or digit' },
+      },
+      required: ['id', 'keys'],
+    } },
   { name: 'read_aloud', description: "Read an agent's last message, or a terminal agent's screen, out loud in full, word for word. Say nothing after calling it.",
     parametersJsonSchema: {
       type: 'object',
@@ -118,14 +129,15 @@ const TOOLS = [
 
 const brief = (a) => ({
   id: a.id, label: a.label, kind: a.kind || 'pill', machine: a.device, alive: a.alive, state: a.state,
-  waiting_for: a.waiting_kind, did: a.did,
+  waiting_for: a.waiting_kind, did: a.did, error: a.state === 'error' ? a.summary : undefined,
   wants_to_run: a.pending, request_ids: a.pending_ids,
   last_message: a.last, you_sent: a.prompt,
 });
 
 /** what the secretary says when an agent raises its hand while you're away */
 const update = (a) => `[update] ${a.label} on ${a.device} ` + (
-  a.waiting_kind === 'approval_request' ? `wants approval to run: ${a.pending.join('; ')}.`
+  a.state === 'error' ? `stopped with an error: ${a.summary}`
+    : a.waiting_kind === 'approval_request' ? `wants approval to run: ${a.pending.join('; ')}.`
     : a.waiting_kind === 'question' ? `asks: ${a.summary}`
     : `finished: ${a.summary || 'no summary'}`
 ) + (a.did ? ` It used: ${a.did}.` : '');
@@ -164,12 +176,12 @@ function toolRunner({ link, roster, setMode, readAloud = () => {} }) {
   return (name, args) => {
     if (name === 'agents') return { agents: roster().map(brief) };
     if (name === 'set_mode') return setMode(args.mode) ? { ok: true } : { error: 'mode is desk or away' };
-    const op = { reply: 'send', approve: 'approve', deny: 'deny', stop: 'stop', screen: 'screen', read_aloud: 'read' }[name];
+    const op = { reply: 'send', approve: 'approve', deny: 'deny', stop: 'stop', screen: 'screen', read_aloud: 'read', press: 'press' }[name];
     if (!op) return { error: `no tool called ${name}` };
     const a = roster().find((x) => x.id === args.id);
     if (!a) return { error: 'no agent with that id; call agents first' };
     if (!a.alive) return { error: `${a.label} has ended` };
-    if ((op === 'screen' || (op === 'read' && args.what === 'screen')) && a.kind !== 'terminal') {
+    if ((op === 'screen' || op === 'press' || (op === 'read' && args.what === 'screen')) && a.kind !== 'terminal') {
       return { error: `${a.label} has no screen: it runs in the pill` };
     }
     if (op === 'screen') {
@@ -192,10 +204,12 @@ function toolRunner({ link, roster, setMode, readAloud = () => {} }) {
       if (said.length !== asked.length || !asked.every((x) => said.includes(x))) {
         return { error: 'the requests changed since you read them out; call agents and read the new ones' };
       }
-      return link.do(op, a.id, undefined, said) ? { ok: true } : { error: 'not connected to the hub' };
+      return done(link.do(op, a.id, undefined, said));
     }
-    return link.do(op, a.id, args.text) ? { ok: true } : { error: 'not connected to the hub' };
+    return done(link.do(op, a.id, op === 'press' ? args.keys : args.text));
   };
+  // ok only once the agent's machine says it happened; otherwise its reason, word for word
+  function done(p) { return p.then(() => ({ ok: true }), (e) => ({ error: e.message })); }
 }
 
 /** speech both ways. One session, opened on first use, closed after a quiet minute. */

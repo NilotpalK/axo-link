@@ -202,8 +202,9 @@
   const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
   let list = [], sel = null, tab = 'all', hubUp = true, settings = {};
-  // "waiting" means it needs a decision from you; a finished turn is just done
-  const needsYou = (s) => s.state === 'waiting' && s.waiting_kind !== 'finished';
+  // "waiting" means it needs a decision from you; a finished turn is just done.
+  // A turn that failed (an API error, say) needs you too, while it's still open.
+  const needsYou = (s) => (s.state === 'waiting' && s.waiting_kind !== 'finished') || (s.state === 'error' && s.alive);
   const look = (s) => (s.state === 'waiting' && !needsYou(s) ? 'done' : s.state);
   let voice = 'idle', voiceMode = 'dictate', errMsg = '', errT, caption = '', speaking = false, previewing = false;
 
