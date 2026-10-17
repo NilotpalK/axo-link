@@ -121,6 +121,27 @@ test('a session moves through its states as the hooks report them', () => {
   assert.equal(states[5].last, undefined, "its last words aren't wiped when the error carries none");
 });
 
+test('a message typed mid-task joins the running turn; a new turn, or one after Esc, counts afresh', () => {
+  const rec = {};
+  const on = stateMachine((patch) => Object.assign(rec, patch), () => rec.state);
+  // what claude 2.1.301 sends: a second UserPromptSubmit mid-task, then one Stop for both
+  on({ hook_event_name: 'UserPromptSubmit', prompt: 'echo one, then sleep 8' });
+  on({ hook_event_name: 'PostToolUse', tool_name: 'Bash' });
+  on({ hook_event_name: 'UserPromptSubmit', prompt: 'also say SECOND' });
+  assert.equal(rec.did, 'Bash', 'still shows what it did so far');
+  on({ hook_event_name: 'PostToolUse', tool_name: 'Bash' });
+  on({ hook_event_name: 'Stop', last_assistant_message: 'FIRST\nSECOND' });
+  assert.equal(rec.did, 'Bash ×2');
+
+  on({ hook_event_name: 'UserPromptSubmit', prompt: 'read the readme' });
+  on({ hook_event_name: 'PostToolUse', tool_name: 'Read' });
+  rec.state = 'idle';                                   // Esc: no hook says so; the launcher sets it
+  on({ hook_event_name: 'UserPromptSubmit', prompt: 'never mind, edit it' });
+  on({ hook_event_name: 'PostToolUse', tool_name: 'Edit' });
+  on({ hook_event_name: 'Stop', last_assistant_message: 'Edited.' });
+  assert.equal(rec.did, 'Edit');
+});
+
 test('axo claude: listed, typed into, followed through its hooks, its screen read, stopped', async () => {
   const hub = startHub({ port: 0, token: 'secret' });
   await once(hub, 'listening');

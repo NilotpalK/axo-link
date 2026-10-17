@@ -42,8 +42,9 @@ function which(cmd) {
   return { file: cmd, pre: [] };
 }
 
-/** Claude's hooks call this; each event moves the session's state on */
-function stateMachine(set) {
+/** Claude's hooks call this; each event moves the session's state on.
+ *  `state` reads the session's current state, Esc included, which no hook reports. */
+function stateMachine(set, state = () => null) {
   let tools = [], known = null;
   return (e) => {
     // Claude's own id for the session, for reading its history: every event
@@ -51,8 +52,10 @@ function stateMachine(set) {
     if (typeof e.session_id === 'string' && e.session_id !== known) set({ claude_session: (known = e.session_id) });
     switch (e.hook_event_name) {
       case 'UserPromptSubmit':
-        tools = [];
-        return set({ state: 'running', prompt: e.prompt, waiting_kind: null, pending: [], did: '', summary: '' });
+        // typed mid-task, it joins the running turn and one Stop covers both
+        // (claude 2.1.301), so the tally carries on; a new turn starts afresh
+        if (state() !== 'running') tools = [];
+        return set({ state: 'running', prompt: e.prompt, waiting_kind: null, pending: [], did: tally(tools), summary: '' });
       case 'PostToolUse':
         tools.push(e.tool_name);
         // a tool ran, so whatever it was asking permission for has been answered
@@ -161,7 +164,7 @@ async function launch({ file, args, id, cwd = process.cwd(), typeDelay = 150, ke
     if (s === '\x1b' || s === '\x03') interrupted();
     draft.typed(s);
   };
-  const machine = stateMachine(set);
+  const machine = stateMachine(set, () => record.state);
   const onHook = (e) => {
     if (e.hook_event_name === 'UserPromptSubmit') draft.clear();   // whatever was in the prompt has gone in
     machine(e);
