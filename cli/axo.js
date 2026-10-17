@@ -64,16 +64,73 @@ function stateMachine(set) {
         const summary = brief(last);
         return set({ state: 'waiting', waiting_kind: kindOf(summary), pending: [], last, summary, did: tally(tools) });
       }
+      case 'StopFailure': {
+        // the turn died on an API error (rate limit, overloaded, billing...): Stop never comes
+        const details = typeof e.error_details === 'string' ? e.error_details : e.error_details && JSON.stringify(e.error_details);
+        const why = brief([e.error || 'unknown error', details].filter(Boolean).join(': '));
+        const last = typeof e.last_assistant_message === 'string' && e.last_assistant_message ? { last: e.last_assistant_message } : {};
+        return set({ state: 'error', waiting_kind: null, pending: [], ...last, summary: `the turn failed (${why})`, did: tally(tools) });
+      }
       case 'Notification':
         // Claude saying it's sat waiting for input, without a turn having ended
-        if (e.notification_type === 'idle_prompt') return set({ state: 'waiting', waiting_kind: kindOf(e.message || '') });
+        if (e.notification_type === 'idle_prompt') return set({ state: 'waiting', waiting_kind: kindOf(e.message || ''), pending: [] });
     }
+  };
+}
+
+// what axo may press in a terminal; letters and digits besides. No Ctrl
+// combinations: Ctrl+C twice quits Claude.
+const KEYS = {
+  up: '\x1b[A', down: '\x1b[B', right: '\x1b[C', left: '\x1b[D',
+  enter: '\r', esc: '\x1b', tab: '\t', space: ' ', backspace: '\x7f',
+};
+/** the bytes for a key name, or null; only the names above, never Object's own properties */
+const keyBytes = (name) => {
+  const n = String(name);
+  return Object.hasOwn(KEYS, n.toLowerCase()) ? KEYS[n.toLowerCase()] : /^[a-z0-9]$/i.test(n) ? n : null;
+};
+
+// escape sequences (arrows, Alt+key, a lone Esc) move the cursor; they type nothing
+const ESCAPES = /\x1b(?:\[[\d;?]*[ -/]*[@-~]|O.|.?)/gs;
+const PASTE = ['\x1b[200~', '\x1b[201~'];   // a terminal wraps pasted text in these
+
+/** Roughly how much is typed into Claude's prompt and not yet sent, from the
+ *  keys pressed, as they arrive. axo won't type on top of it: a half-written
+ *  line and its words would go in as one message.
+ *  ponytail: counts keys, doesn't read the prompt. A line recalled with the
+ *  up arrow, or a big paste Claude shows as one "[Pasted text]" chip that a
+ *  single backspace deletes, is miscounted. Read the prompt line off the
+ *  screen copy if that bites. */
+function drafts() {
+  let n = 0, pasting = false;
+  const keys = (s) => {
+    for (const ch of s.replace(ESCAPES, '')) {
+      if (ch === '\r' || ch === '\x03' || ch === '\x15') n = 0;   // Enter, Ctrl+C, Ctrl+U
+      else if (ch === '\x7f' || ch === '\b') n = Math.max(0, n - 1);
+      else if (ch >= ' ') n++;
+    }
+  };
+  return {
+    // a paste is all text, line breaks included, however many chunks it spans
+    typed(s) {
+      while (s) {
+        const mark = PASTE[pasting ? 1 : 0], at = s.indexOf(mark);
+        const before = at < 0 ? s : s.slice(0, at);
+        if (pasting) n += [...before].length; else keys(before);
+        if (at < 0) return;
+        pasting = !pasting;
+        s = s.slice(at + mark.length);
+      }
+    },
+    left: () => n,
+    add: (k) => { n += k; },
+    clear: () => { n = 0; },
   };
 }
 
 /** Run `file args` in a pseudo-terminal wired to this terminal, and register
  *  it with the hub. Resolves with the exit code when the program ends. */
-async function launch({ file, args, id, cwd = process.cwd(), typeDelay = 150 }) {
+async function launch({ file, args, id, cwd = process.cwd(), typeDelay = 150, keyDelay = 60 }) {
   const out = process.stdout, input = process.stdin;
   const cols = out.columns || 120, rows = out.rows || 30;
 
@@ -89,9 +146,26 @@ async function launch({ file, args, id, cwd = process.cwd(), typeDelay = 150 }) 
     Object.assign(record, patch);
     if (patch.state && patch.state !== was) record.since = Date.now();
     session.emit('update');
-    if (record.state === 'waiting' && was !== 'waiting') session.emit('waiting', { ...record });
+    // done, asking, or failed: each raises its hand once
+    if ((record.state === 'waiting' || record.state === 'error') && was !== record.state) session.emit('waiting', { ...record });
   };
-  const onHook = stateMachine(set);
+
+  const draft = drafts();
+  const interrupted = () => {
+    // Esc or Ctrl+C stops a turn, or declines a permission prompt, and no hook says so
+    if (record.state === 'running' || record.waiting_kind === 'approval_request') {
+      set({ state: 'idle', waiting_kind: null, pending: [] });
+    }
+  };
+  const typed = (s) => {
+    if (s === '\x1b' || s === '\x03') interrupted();
+    draft.typed(s);
+  };
+  const machine = stateMachine(set);
+  const onHook = (e) => {
+    if (e.hook_event_name === 'UserPromptSubmit') draft.clear();   // whatever was in the prompt has gone in
+    machine(e);
+  };
 
   // Claude's hooks for this session report here: this PC only, behind a
   // secret path, POST only, and never from a browser (browsers send Origin)
@@ -116,7 +190,7 @@ async function launch({ file, args, id, cwd = process.cwd(), typeDelay = 150 }) 
   const settings = path.join(os.tmpdir(), `axo-${id}.json`);
   fs.writeFileSync(settings, JSON.stringify({
     // no SessionStart: Claude doesn't send that one over HTTP ("not supported")
-    hooks: { UserPromptSubmit: hook, PostToolUse: hook, PermissionRequest: hook, Stop: hook, Notification: hook },
+    hooks: { UserPromptSubmit: hook, PostToolUse: hook, PermissionRequest: hook, Stop: hook, StopFailure: hook, Notification: hook },
   }), { mode: 0o600 });
 
   // AXO_DEBUG=1: Claude logs what it does with hooks to a file next to the settings
@@ -134,7 +208,35 @@ async function launch({ file, args, id, cwd = process.cwd(), typeDelay = 150 }) 
   };
 
   pty.onData((d) => { out.write(d); screen.write(d); });
-  input.on('data', (d) => pty.write(d.toString()));
+  // While axo is typing, your keys wait, so none land between its words and its Enter
+  let busy = false;
+  const held = [];
+  const yours = (s) => { typed(s); pty.write(s); };
+  input.on('data', (d) => (busy ? held.push(d.toString()) : yours(d.toString())));
+  /** Write each piece, `gap` ms apart, then hand the keyboard back. Resolves
+   *  with how many pieces went in: all of them, or fewer if a permission
+   *  prompt came up on the way -- the next piece (an Enter, a key) could
+   *  answer it, so nothing more is written.
+   *  ponytail: relies on Claude's PermissionRequest hook reaching us before
+   *  the next piece is due. If Claude ever draws the prompt well before its
+   *  hook arrives, read the screen copy before each piece instead. */
+  const type = (pieces, gap) => new Promise((resolve) => {
+    busy = true;
+    let i = 0;
+    const done = () => { busy = false; held.splice(0).forEach(yours); resolve(i); };
+    (function next() {
+      if (i === pieces.length || record.waiting_kind === 'approval_request') return done();
+      try { pty.write(pieces[i++]); } catch { return done(); }   // Claude has gone
+      setTimeout(next, gap);
+    })();
+  });
+  /** why axo mustn't type into this terminal right now, if it mustn't */
+  const blocked = () => (
+    record.waiting_kind === 'approval_request' ? `${record.label} is showing a permission prompt; answer it in its terminal first`
+      : busy ? `still typing into ${record.label}`
+      : draft.left() > 0 ? `something is half-typed in ${record.label}'s terminal, so nothing was sent`
+      : null);
+  const promptCameUp = `${record.label} put up a permission prompt while I was typing`;
   if (input.isTTY) input.setRawMode(true);   // keystrokes go to Claude as-is, Ctrl+C included
   input.resume();
   if (out.isTTY) {
@@ -143,19 +245,42 @@ async function launch({ file, args, id, cwd = process.cwd(), typeDelay = 150 }) 
 
   Object.assign(session, {
     list: () => [record],
-    send(_id, text) {
-      if (typeof text !== 'string' || !text.trim()) return false;
-      // One line, then Enter a moment later: text and Enter arriving together
-      // read as a paste, and the paste isn't submitted.
-      // ponytail: lands even if you're typing in this terminal right then.
-      pty.write(text.replace(/\s+/g, ' ').trim());
-      setTimeout(() => pty.write('\r'), typeDelay);
+    // A refusal throws, and its message reaches axo or the pill as is.
+    async send(_id, text) {
+      if (typeof text !== 'string' || !text.trim()) throw new Error('nothing to send');
+      const no = blocked();
+      if (no) throw new Error(no);
+      // Lines stay lines: a line feed is Ctrl+J, which Claude Code takes as a
+      // new line in the prompt rather than Enter. Then Enter a moment later:
+      // text and Enter arriving together read as a paste, which isn't submitted.
+      const lines = text.replace(/\r\n?/g, '\n').replace(/[^\S\n]+/g, ' ').replace(/ ?\n ?/g, '\n').trim();
       set({ prompt: text });
-      return true;
+      const n = await type([lines, '\r'], typeDelay);
+      if (n === 2) return true;
+      if (n === 0) throw new Error(`couldn't type into ${record.label}`);
+      // the words are in its prompt but weren't sent: they count as half-typed now
+      draft.add(lines.length);
+      throw new Error(`${promptCameUp}, so I didn't press Enter; the message is sitting unsent in its prompt`);
+    },
+    /** keys for a menu or picker, one at a time so each reads as a keypress */
+    async press(_id, keys) {
+      if (!Array.isArray(keys) || !keys.length || keys.length > 20) throw new Error('press takes 1 to 20 keys');
+      const bytes = keys.map((k) => {
+        const b = keyBytes(k);
+        if (b === null) throw new Error(`no key called "${k}"`);
+        return b;
+      });
+      // your half-typed line counts (Enter would send it); axo's own keys don't
+      const no = blocked();
+      if (no) throw new Error(no);
+      if (bytes.includes('\x1b')) interrupted();
+      const n = await type(bytes, keyDelay);
+      if (n === bytes.length) return true;
+      throw new Error(`${promptCameUp}, so I stopped after ${n} of ${bytes.length} keys`);
     },
     // permission prompts are answered in the terminal itself, for now
-    approve: () => false,
-    deny: () => false,
+    approve() { throw new Error(`${record.label}'s permission prompts are answered in its terminal`); },
+    deny() { throw new Error(`${record.label}'s permission prompts are answered in its terminal`); },
     stop() { pty.kill(); return true; },
     query(op) { if (op === 'screen') return { text: screenText() }; },
   });
@@ -191,4 +316,4 @@ if (require.main === module) {
     .then((code) => process.exit(code ?? 0));
 }
 
-module.exports = { launch, hubFile, stateMachine };
+module.exports = { launch, hubFile, stateMachine, drafts, keyBytes };

@@ -74,8 +74,7 @@ const link = connect({
 
 // Reading something out in full, word for word: a part at a time through the
 // hub's text-to-speech, the next part being voiced while this one plays.
-// Any hotkey press stops it.
-// ponytail: an away-mode update arriving mid-read plays between two parts.
+// Any hotkey press stops it. Away-mode updates wait until it's done (busy below).
 let reading = null;
 function readAloud(text) {
   reading?.stop();
@@ -103,6 +102,7 @@ function readAloud(text) {
       ui('play', audio);   // the pill queues it after whatever is playing
     }
     if (reading === run) reading = null;
+    talk.drain();   // updates held back during the read; the pill plays them after its last part
   })();
   return { ok: true, reading: `${parts.length} parts, starting now` };
 }
@@ -111,7 +111,7 @@ const talk = secretary({
   link,
   roster: () => roster,
   run: toolRunner({ link, roster: () => roster, setMode, readAloud }),
-  busy: () => !!current,   // never talk over your dictation either
+  busy: () => !!current || !!reading,   // never talk over your dictation, or over a read-aloud
   ui: {
     audio: (b64) => ui('play', b64),
     flush: () => ui('flush'),
@@ -300,11 +300,16 @@ ipcMain.on('focus', (_e, on) => { win.setFocusable(on); if (on) win.focus(); });
 
 // every agent action goes through the hub, so the pill drives any machine's agents
 ipcMain.handle('list', () => roster);
+// the agent's machine says whether it happened; if not, the bar says why
+const act = (op, id, text, asks) => link.do(op, id, text, asks).then(
+  () => true,
+  (e) => { ui('voice', { state: 'error', msg: e.message }); return false; },
+);
 for (const op of ['send', 'deny', 'stop']) {
-  ipcMain.handle(op, (_e, id, text) => link.do(op, id, text));
+  ipcMain.handle(op, (_e, id, text) => act(op, id, text));
 }
 // an approval names the request ids the pill showed you
-ipcMain.handle('approve', (_e, id, asks) => link.do('approve', id, undefined, asks));
+ipcMain.handle('approve', (_e, id, asks) => act('approve', id, undefined, asks));
 // starting one is local: the folder picker is on this machine
 ipcMain.handle('pick', async () => {
   const r = await dialog.showOpenDialog({ properties: ['openDirectory'] });

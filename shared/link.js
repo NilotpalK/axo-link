@@ -3,7 +3,7 @@
 // connector (reports this machine's agents, carries out instructions sent down
 // to it) and pill (receives the roster merged from every machine). It dials
 // out and redials forever, so the hub never needs a way in.
-const OPS = new Set(['send', 'approve', 'deny', 'stop']);
+const OPS = new Set(['send', 'approve', 'deny', 'stop', 'press']);
 // url and token may be functions, read afresh on every (re)connect: the
 // launcher takes them from a file the app rewrites each run with a new token
 const value = (v) => (typeof v === 'function' ? v() : v);
@@ -21,12 +21,15 @@ function connect({ url, token, device, sessions, onMessage = () => {} }) {
   // notification; the agent still shows as waiting in the next snapshot
   sessions.on('waiting', (agent) => send({ t: 'hand', agent }));
 
-  /** a question the hub passed on for one of this machine's agents */
-  async function answer(m) {
+  /** answer the hub about one of this machine's agents: a question, or how an instruction went */
+  async function answer(ref, fn) {
     let r;
-    try { r = await sessions.query?.(m.op, m.id); } catch (e) { r = { error: e.message }; }
-    send({ t: 'answer', ref: m.ref, ...(r || { error: `that session can't answer "${m.op}"` }) });
+    try { r = await fn(); } catch (e) { r = { error: e.message }; }
+    send({ t: 'answer', ref, ...r });
   }
+  // An instruction's outcome: true is done, false a plain no. A session that
+  // can say why not throws, and its message is passed back as is.
+  const outcome = (op, r) => (r === true ? { ok: true } : { error: `couldn't ${op} it` });
 
   const later = (fn) => {
     if (closed) return;
@@ -48,10 +51,17 @@ function connect({ url, token, device, sessions, onMessage = () => {} }) {
       let m;
       try { m = JSON.parse(e.data); } catch { return; }
       if (m.t === 'reply') return replies.get(m.ref)?.(m);
-      if (m.t === 'query') return answer(m);
+      if (m.t === 'query') {
+        return answer(m.ref, async () => (await sessions.query?.(m.op, m.id)) || { error: `that session can't answer "${m.op}"` });
+      }
       if (m.t !== 'do') return onMessage(m);
+      if (!OPS.has(m.op) || typeof sessions[m.op] !== 'function') {
+        return m.ref !== undefined && answer(m.ref, () => ({ error: `that session can't ${m.op}` }));
+      }
       // an approval carries the request ids it was given for; everything else, text
-      if (OPS.has(m.op)) sessions[m.op](m.id, m.op === 'approve' ? m.asks : m.text);
+      const run = () => sessions[m.op](m.id, m.op === 'approve' ? m.asks : m.text);
+      if (m.ref === undefined) return run();
+      answer(m.ref, async () => outcome(m.op, await run()));
     };
     // A refused connection fires only 'error' -- Node's WebSocket sends no
     // 'close' then -- and a dropped one fires 'close', sometimes after an
@@ -67,20 +77,23 @@ function connect({ url, token, device, sessions, onMessage = () => {} }) {
     ws.onclose = lost;
   })();
 
+  /** request/reply over the same socket: resolves with the hub's reply, rejects on its error */
+  const ask = (msg, ms = 10000) => new Promise((resolve, reject) => {
+    const ref = ++refs;
+    const t = setTimeout(() => settle({ error: 'the hub did not answer' }), ms);
+    const settle = (m) => {
+      clearTimeout(t);
+      replies.delete(ref);
+      if (m.error) reject(new Error(m.error)); else resolve(m);
+    };
+    replies.set(ref, settle);
+    if (!send({ ...msg, ref })) settle({ error: 'not connected to the hub' });
+  });
+
   return {
-    do: (op, id, text, asks) => send({ t: 'do', op, id, text, asks }),
-    /** request/reply over the same socket: resolves with the hub's reply, rejects on its error */
-    ask: (msg, ms = 10000) => new Promise((resolve, reject) => {
-      const ref = ++refs;
-      const t = setTimeout(() => settle({ error: 'the hub did not answer' }), ms);
-      const settle = (m) => {
-        clearTimeout(t);
-        replies.delete(ref);
-        if (m.error) reject(new Error(m.error)); else resolve(m);
-      };
-      replies.set(ref, settle);
-      if (!send({ ...msg, ref })) settle({ error: 'not connected to the hub' });
-    }),
+    /** an instruction for an agent: resolves once its machine has carried it out, rejects saying why not */
+    do: (op, id, text, asks) => ask({ t: 'do', op, id, text, asks }),
+    ask,
     close: () => { closed = true; clearTimeout(retry); ws?.close(); },
   };
 }

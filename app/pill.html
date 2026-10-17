@@ -313,8 +313,9 @@
   $('#v-done').innerHTML = ICON.check(15);
 
   let list = [], sel = null, tab = 'all', hubUp = true, settings = {};
-  // "waiting" means it needs a decision from you; a finished turn is just done
-  const needsYou = (s) => s.state === 'waiting' && s.waiting_kind !== 'finished';
+  // "waiting" means it needs a decision from you; a finished turn is just done.
+  // A turn that failed (an API error, say) needs you too, while it's still open.
+  const needsYou = (s) => (s.state === 'waiting' && s.waiting_kind !== 'finished') || (s.state === 'error' && s.alive);
   const look = (s) => (s.state === 'waiting' && !needsYou(s) ? 'done' : s.state);
   let voice = 'idle', voiceMode = 'dictate', caption = '', speaking = false, previewing = false;
 
@@ -693,6 +694,11 @@
   // at the desk, a session that's done or asking you something gets a card (approvals get their own)
   axo.on('hand', (a) => {
     if (!a || a.waiting_kind === 'approval_request') return;
+    // a turn that died on an API error (rate limit, overloaded...) says so, not "finished"
+    if (a.state === 'error') return card('hand:' + a.id, {
+      icon: ICON.alert, tone: 'bad', title: a.label + ' stopped with an error', body: a.summary || '', life: 12000,
+      actions: [{ label: 'Open', run: () => openSession(a.id) }],
+    });
     card('hand:' + a.id, {
       icon: ICON.done, title: a.label + (a.waiting_kind === 'question' ? ' is asking you' : ' finished'),
       body: a.summary || '', life: 10000,

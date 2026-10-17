@@ -4,10 +4,13 @@
 // merges them into one roster, broadcasts it, and routes each instruction down
 // the socket of whichever machine owns that agent.
 //
-//   in:  hello{token, device?}  agents{list}  hand{agent}  do{op, id, text?}
+//   in:  hello{token, device?}  agents{list}  hand{agent}  do{op, id, text?, asks?, ref?}
 //        voice{ref, kind}  clean{ref, text, where?}  speak{ref, text}  query{ref, op, id}  answer{ref, ...}
-//   out: roster{agents}  hand{agent}  do{op, id, text?}  query{ref, op, id}
+//   out: roster{agents}  hand{agent}  do{op, id, text?, asks?, ref?}  query{ref, op, id}
 //        error{id, msg}  reply{ref, ...}
+//
+//   A do or query with a ref goes to the agent's machine, whose answer{ref}
+//   -- ok, or the error saying why not -- comes back to the sender as reply{ref}.
 //
 //   AXO_TOKEN=… node hub/hub.js                  (localhost only)
 //   AXO_HOST=0.0.0.0 AXO_TOKEN=… node hub/hub.js (reachable from other machines)
@@ -222,22 +225,22 @@ function startHub({ port = 7777, host = '127.0.0.1', token = process.env.AXO_TOK
         broadcast({ t: 'roster', agents: roster() });
       } else if (m.t === 'hand' && ws.device && validAgent(m.agent)) {
         broadcast({ t: 'hand', agent: { ...m.agent, device: ws.device } });
-      } else if (m.t === 'do') {
+      } else if (m.t === 'do' || m.t === 'query') {
+        // An instruction, or a question ("what's on its screen?"), for the
+        // machine that owns an agent. Deliberately not queued: a stale "go
+        // ahead" must never fire hours later. With a ref, the machine's answer
+        // -- done, or why not -- is passed back to whoever sent it.
         const owner = ownerOf(m.id);
-        // deliberately not queued: a stale "go ahead" must never fire hours later
-        if (owner) send(owner, { t: 'do', op: m.op, id: m.id, text: m.text, asks: m.asks });
-        else send(ws, { t: 'error', id: m.id, msg: "that agent's machine is offline" });
-      } else if (m.t === 'query') {
-        // a question for the machine that owns an agent ("what's on its
-        // screen?"): passed there, and its answer passed back to whoever asked
-        const owner = ownerOf(m.id);
-        if (!owner) return send(ws, { t: 'reply', ref: m.ref, error: "that agent's machine is offline" });
+        const out = m.t === 'do' ? { t: 'do', op: m.op, id: m.id, text: m.text, asks: m.asks } : { t: 'query', op: m.op, id: m.id };
+        const offline = "that agent's machine is offline";
+        if (m.ref === undefined) return owner ? send(owner, out) : send(ws, { t: 'error', id: m.id, msg: offline });
+        if (!owner) return send(ws, { t: 'reply', ref: m.ref, error: offline });
         const r = ++relays;
         asked.set(r, { from: ws, ref: m.ref, owner });
         setTimeout(() => {
           if (asked.delete(r)) send(ws, { t: 'reply', ref: m.ref, error: 'the machine did not answer' });
         }, 10000).unref();
-        send(owner, { t: 'query', ref: r, op: m.op, id: m.id });
+        send(owner, { ...out, ref: r });
       } else if (m.t === 'answer') {
         const q = asked.get(m.ref);
         if (!q || q.owner !== ws) return;   // only the machine that was asked may answer
