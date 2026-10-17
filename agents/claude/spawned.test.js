@@ -6,7 +6,8 @@ const test = require('node:test');
 const assert = require('node:assert');
 const { PassThrough } = require('node:stream');
 const { EventEmitter } = require('node:events');
-const { Sessions, brief } = require('../sessions');
+const { Sessions } = require('../sessions');
+const { brief } = require('../summary');
 
 function fakeSpawn() {
   const child = new EventEmitter();

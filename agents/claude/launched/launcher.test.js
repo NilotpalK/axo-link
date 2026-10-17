@@ -152,7 +152,7 @@ test('axo claude: listed, typed into, followed through its hooks, its screen rea
   const fake = path.join(dir, 'fake-claude.js');
   fs.writeFileSync(fake, FAKE);
 
-  const launcher = spawn(process.execPath, [path.join(__dirname, 'launcher.js'), 'claude', fake], {
+  const launcher = spawn(process.execPath, [path.join(__dirname, '../../../cli/axo.js'), 'claude', fake], {
     cwd: dir, env: { ...process.env, AXO_HUB_FILE: hubFile, AXO_CLAUDE: process.execPath },
   });
   let screen = '';

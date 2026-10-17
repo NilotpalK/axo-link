@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 'use strict';
 // `axo claude [arguments]`: the real Claude Code in your terminal, with
 // axo-link sitting in between. Everything you type and everything Claude draws
@@ -20,7 +19,7 @@ const http = require('node:http');
 const { once, EventEmitter } = require('node:events');
 const { randomUUID, randomBytes } = require('node:crypto');
 const { connect } = require('../../../shared/link');
-const { brief, tally, argText, kindOf } = require('../../sessions');
+const { brief, tally, argText, kindOf } = require('../../summary');
 
 /** where the companion app leaves the hub's address and this run's token */
 function hubFile() {
@@ -301,12 +300,8 @@ async function launch({ file, args, id, cwd = process.cwd(), typeDelay = 150, ke
   }));
 }
 
-if (require.main === module) {
-  const [vendor, ...args] = process.argv.slice(2);
-  if (vendor !== 'claude') {
-    console.error('usage: axo claude [arguments for claude]');
-    process.exit(2);
-  }
+/** `axo claude [arguments]`: start the real Claude under the launcher, exit with its code */
+function run(args) {
   // AXO_CLAUDE: a different claude executable, if it isn't the one on PATH
   const { file, pre } = process.env.AXO_CLAUDE ? { file: process.env.AXO_CLAUDE, pre: [] } : which('claude');
   // Our own session id, so this session's history can be found later; a
@@ -319,4 +314,4 @@ if (require.main === module) {
     .then((code) => process.exit(code ?? 0));
 }
 
-module.exports = { launch, hubFile, stateMachine, drafts, keyBytes };
+module.exports = { run, launch, hubFile, stateMachine, drafts, keyBytes };
