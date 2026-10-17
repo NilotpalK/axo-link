@@ -174,16 +174,40 @@ test('a crash surfaces stderr instead of a silent idle dot', async () => {
   assert.equal(s.send(id, 'hello'), false, 'dead session refuses input');
 });
 
-test('stop ends the session as ended, not as a crash, and it shows as dead', () => {
+test('stop ends the session as ended, not as a crash, and it shows as dead', async () => {
   const s = new Sessions(fakeSpawn);
   const id = s.start({ label: 'test' });
   const child = fakeSpawn.last;
   child.kill = () => child.emit('exit', 1);   // a killed tree exits nonzero on Windows
-  assert.equal(s.stop(id), true);
+  assert.equal(await s.stop(id), true, 'resolves once the process has exited');
   const rec = s.list()[0];
   assert.equal(rec.state, 'exited');
   assert.equal(rec.alive, false);
   assert.equal(s.send(id, 'hello'), false);
+});
+
+test('stop says so when the process is still running, instead of reporting it stopped', async () => {
+  const s = new Sessions(fakeSpawn, { stopWait: 50 });
+  const id = s.start({ label: 'stubborn' });
+  fakeSpawn.last.kill = () => {};   // the kill didn't take
+  await assert.rejects(s.stop(id), /stubborn didn't stop/);
+  assert.equal(s.list()[0].alive, true, 'still shown as running, because it is');
+});
+
+test("a CLI that can't start shows as dead with the reason, not as a live ghost", async () => {
+  const s = new Sessions(fakeSpawn);
+  const id = s.start({ label: 'test' });
+  const child = fakeSpawn.last;   // no pid: the spawn itself failed
+  child.emit('error', new Error('spawn claude ENOENT'));
+  let rec = s.list()[0];
+  assert.equal(rec.state, 'error');
+  assert.equal(rec.alive, false);
+  assert.match(rec.last, /ENOENT/);
+  assert.equal(s.send(id, 'hello'), false, 'nothing to send to');
+  child.emit('exit', null);   // if an exit does follow, it doesn't relabel it
+  rec = s.list()[0];
+  assert.equal(rec.state, 'error');
+  assert.match(rec.last, /ENOENT/);
 });
 
 test('brief() stops at two sentences and never runs on forever', () => {

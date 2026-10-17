@@ -134,10 +134,12 @@ class Sessions extends EventEmitter {
   #procs = new Map();   // id -> { child, vendor, stderr, turn }
   #state = new Map();   // id -> record rendered by the pill
   #spawn;
+  #stopWait;   // how long stop() waits for the process to exit
 
-  constructor(spawnFn = spawn) {
+  constructor(spawnFn = spawn, { stopWait = 5000 } = {}) {
     super();
     this.#spawn = spawnFn;
+    this.#stopWait = stopWait;
   }
 
   list() { return [...this.#state.values()]; }
@@ -171,15 +173,26 @@ class Sessions extends EventEmitter {
       if (patch) this.#set(id, patch);
     });
     child.stderr?.on('data', (d) => { proc.stderr = (proc.stderr + d).slice(-500); });
-    child.on('error', (e) => this.#set(id, { state: 'error', last: e.message, summary: e.message }));
-    child.on('exit', (code) => {
+    // The session ends once, whichever event says so. A CLI that can't start
+    // (no pid) fires only 'error', and Node doesn't promise an 'exit' after it;
+    // an 'error' from one that's running (a kill that failed) doesn't end it.
+    let ended = false;
+    const end = (patch) => {
+      if (ended) return;
+      ended = true;
       this.#procs.delete(id);
-      const gone = { alive: false, waiting_kind: null, pending: [], pending_ids: [] };
+      this.#set(id, { alive: false, waiting_kind: null, pending: [], pending_ids: [], ...patch });
+    };
+    child.on('error', (e) => {
+      const why = { state: 'error', last: e.message, summary: brief(e.message) };
+      if (child.pid === undefined) end(why); else this.#set(id, why);
+    });
+    child.on('exit', (code) => {
       // a stop we asked for, or a clean exit, just ends the session; a crash should say why
       if (code && !proc.stopping) {
         const why = proc.stderr.trim() || `exited ${code}`;
-        this.#set(id, { ...gone, state: 'error', last: why, summary: brief(why) });
-      } else this.#set(id, { ...gone, state: 'exited' });
+        end({ state: 'error', last: why, summary: brief(why) });
+      } else end({ state: 'exited' });
     });
     return id;
   }
@@ -221,19 +234,25 @@ class Sessions extends EventEmitter {
     return true;
   }
 
+  /** Resolves once the process has really exited; rejects if it's still
+   *  running after a while, so "stopped" is never said too early. */
   stop(id) {
     const p = this.#procs.get(id);
     if (!p) return false;
+    const gone = new Promise((resolve, reject) => {
+      const t = setTimeout(() => reject(new Error(`${this.#state.get(id)?.label || 'the session'} didn't stop`)), this.#stopWait);
+      p.child.once('exit', () => { clearTimeout(t); resolve(true); });
+    });
     p.stopping = true;
     // shell:true puts cmd.exe between us and claude, so kill() would only take
     // out cmd.exe. taskkill /T takes the whole tree, claude's tool runs included.
     if (process.platform === 'win32' && p.child.pid) {
       spawn('taskkill', ['/pid', String(p.child.pid), '/T', '/F'], { stdio: 'ignore' });
     } else p.child.kill();
-    return true;
+    return gone;
   }
 
-  stopAll() { for (const id of this.#procs.keys()) this.stop(id); }
+  stopAll() { for (const id of this.#procs.keys()) Promise.resolve(this.stop(id)).catch(() => {}); }
 
   #set(id, patch) {
     const prev = this.#state.get(id) || {};
