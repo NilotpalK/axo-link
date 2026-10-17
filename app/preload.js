@@ -2,7 +2,7 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 // the only channels main pushes to the pill
-const EVENTS = new Set(['sessions', 'link', 'voice', 'play', 'flush', 'caption', 'chime', 'settings']);
+const EVENTS = new Set(['sessions', 'link', 'voice', 'play', 'flush', 'caption', 'chime', 'settings', 'hand']);
 
 contextBridge.exposeInMainWorld('axo', {
   on: (channel, cb) => EVENTS.has(channel) && ipcRenderer.on(channel, (_e, v) => cb(v)),
@@ -12,6 +12,9 @@ contextBridge.exposeInMainWorld('axo', {
   approve: (id, asks) => ipcRenderer.invoke('approve', id, asks),
   deny: (id) => ipcRenderer.invoke('deny', id),
   stop: (id) => ipcRenderer.invoke('stop', id),
+  read: (id) => ipcRenderer.invoke('read', id),
+  retry: () => ipcRenderer.invoke('retry'),
+  endVoice: (cancel) => ipcRenderer.send('voice-end', cancel),
   settings: () => ipcRenderer.invoke('settings'),
   record: (mode) => ipcRenderer.invoke('record', mode),
   setMode: (mode) => ipcRenderer.invoke('mode', mode),

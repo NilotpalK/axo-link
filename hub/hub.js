@@ -5,7 +5,7 @@
 // the socket of whichever machine owns that agent.
 //
 //   in:  hello{token, device?}  agents{list}  hand{agent}  do{op, id, text?, asks?, ref?}
-//        voice{ref, kind}  clean{ref, text}  speak{ref, text}  query{ref, op, id}  answer{ref, ...}
+//        voice{ref, kind}  clean{ref, text, where?}  speak{ref, text}  query{ref, op, id}  answer{ref, ...}
 //   out: roster{agents}  hand{agent}  do{op, id, text?, asks?, ref?}  query{ref, op, id}
 //        error{id, msg}  reply{ref, ...}
 //
@@ -129,6 +129,36 @@ What's the capital of France?
 <dictation>send it to john at three no wait four pm and uh cc sarah</dictation>
 Send it to John at 4 PM and CC Sarah.`;
 
+// Where the words are going, as the app saw it on your machine: a coarse kind,
+// and in a terminal or editor the coding agent there. Only these known values
+// reach the prompt; anything else the app sends is ignored.
+const AGENT_NAMES = { claude: 'Claude Code', codex: 'Codex', gemini: 'Gemini CLI', aider: 'Aider',
+  opencode: 'opencode', 'cursor-agent': 'Cursor Agent', qwen: 'Qwen Code', cline: 'Cline' };
+const FOR_KIND = {
+  terminal: 'It is being typed into a terminal, perhaps as a command: keep command names, flags and paths exactly, and put no full stop after a command.',
+  editor: 'It is being typed into a code editor: keep identifiers, file names and code words exactly.',
+  chat: 'It is a chat message: keep it casual, with no greeting or sign-off unless one was spoken.',
+  email: 'It is going into an email: full sentences and normal punctuation.',
+  document: 'It is going into a document: full sentences and normal punctuation.',
+};
+function cleanRules(where) {
+  const agent = Object.hasOwn(AGENT_NAMES, where?.agent) ? AGENT_NAMES[where.agent] : null;
+  if (agent) {
+    return `${CLEAN_RULES}
+
+The text is an instruction to ${agent}, an AI coding agent. Write spoken file names, paths, flags and code the way they're written: "fetch dot js" becomes fetch.js, "src slash app" becomes src/app, "dash dash force" becomes --force. Write exactly the flags that were spoken, adding none. Keep identifiers and version numbers exactly. No markdown or backticks, no greeting.
+
+<dictation>um can you add a test for the uh slow network case in fetch dot js</dictation>
+Can you add a test for the slow-network case in fetch.js?
+
+<dictation>try git log dash dash oneline dash five and uh see what changed</dictation>
+Try git log --oneline -5 and see what changed.`;
+  }
+  return Object.hasOwn(FOR_KIND, where?.kind) ? `${CLEAN_RULES}
+
+${FOR_KIND[where.kind]}` : CLEAN_RULES;
+}
+
 const words = (s) => s.toLowerCase().match(/[\p{L}\p{N}']+/gu) || [];
 /** A clean-up removes and fixes; it doesn't add. Catches answers and rewrites
  *  the prompt let through. Ceiling: a short answer the same length as the
@@ -141,12 +171,12 @@ function plausible(raw, cleaned) {
   return b.filter((w) => !heard.has(w)).length <= Math.max(2, b.length * 0.3);   // fixes, not new content
 }
 
-async function clean(raw) {
+async function clean(raw, where) {
   const r = await gemini().models.generateContent({
     model: CLEAN_MODEL,
     contents: `<dictation>${raw.replace(/<\/?dictation>/gi, '')}</dictation>`,
     config: {
-      systemInstruction: CLEAN_RULES,
+      systemInstruction: cleanRules(where),
       temperature: 0,
       maxOutputTokens: 64 + raw.length,
       thinkingConfig: { thinkingLevel: 'MINIMAL' },   // tidying needs no reasoning, just speed
@@ -221,7 +251,7 @@ function startHub({ port = 7777, host = '127.0.0.1', token = process.env.AXO_TOK
         const text = typeof m.text === 'string' && m.text.trim() && m.text.length <= 20000 ? m.text : null;
         const job = m.t === 'voice' ? voiceToken(m.kind)
           : !text ? Promise.reject(new Error(`nothing to ${m.t}`))
-          : m.t === 'clean' ? clean(text) : speak(text);
+          : m.t === 'clean' ? clean(text, m.where) : speak(text);
         job.then(
           (r) => send(ws, { t: 'reply', ref: m.ref, ...r }),
           (e) => send(ws, { t: 'reply', ref: m.ref, error: e.message }),
@@ -251,4 +281,4 @@ if (require.main === module) {
   startHub({ host, port }).on('listening', () => console.log(`hub on ws://${host}:${port}`));
 }
 
-module.exports = { startHub, plausible, loadEnv };
+module.exports = { startHub, plausible, cleanRules, loadEnv };

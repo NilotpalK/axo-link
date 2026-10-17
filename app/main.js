@@ -8,6 +8,7 @@ const { startHub, loadEnv } = require('../hub/hub');
 loadEnv();   // GEMINI_API_KEY and friends, from .env, before anything reads them
 const { connect } = require('../shared/link');
 const { hotkeys, invalid, label, hook } = require('./keys');
+const { focusWatcher, classify, sameWindow } = require('./focus');
 const { dictation, secretary, toolRunner, update, speakable } = require('./voice');
 
 // A fixed transparent window at the bottom centre. The pill draws inside it
@@ -20,7 +21,8 @@ const DEFAULTS = {
 };
 
 const sessions = new Sessions();
-let win, keys, roster = [], current = null, micLabel = 'the microphone';
+const focus = focusWatcher();   // where you're dictating, asked as each dictation starts
+let win, keys, roster = [], current = null, micLabel = 'the microphone', linkUp = false;
 const ui = (channel, value) => win?.webContents.send(channel, value);
 
 const settingsFile = path.join(app.getPath('userData'), 'settings.json');
@@ -61,8 +63,11 @@ const link = connect({
   onMessage: (m) => {
     if (m.t === 'roster') { roster = m.agents; ui('sessions', roster); }
     // at the desk an agent finishing is a chime and an amber bar; away, axo says it
-    else if (m.t === 'hand') settings.mode === 'away' ? talk.announce(update(m.agent)) : ui('chime', 'hand');
-    else if (m.t === 'link') ui('link', m.up);
+    else if (m.t === 'hand') {
+      if (settings.mode === 'away') talk.announce(update(m.agent));
+      else { ui('chime', 'hand'); ui('hand', m.agent); }   // the pill shows a card for it
+    }
+    else if (m.t === 'link') { linkUp = m.up; ui('link', m.up); }
     else if (m.t === 'error') ui('voice', { state: 'error', msg: m.msg });
   },
 });
@@ -123,6 +128,8 @@ const hk = hotkeys({ dictate: settings.dictate, talk: settings.talk }, {
   onBegin(mode) {
     if (reading) { reading.stop(); reading = null; ui('flush'); }   // you pressed a key: stop reading
     current = Object.assign(mode === 'dictate' ? dictation(link) : talk.listen(), { peak: 0, bytes: 0 });
+    // the window you're in now is where the words will go; found while you speak
+    if (mode === 'dictate') { current.where = focus.where(); current.kept = []; }
     ui('voice', { mode, state: 'listening' });
   },
   onLock: (mode) => ui('voice', { mode, state: 'locked' }),
@@ -137,27 +144,75 @@ const hk = hotkeys({ dictate: settings.dictate, talk: settings.talk }, {
       // all zeros is a dead or virtual device, not a quiet room
       const msg = c.peak === 0 ? `Silence from ${micLabel}. Change mic in Settings.`
         : "Didn't hear anything. Check the microphone in Settings.";
-      ui('voice', { mode, state: 'error', msg });
+      ui('voice', { mode, state: 'error', kind: 'silence', mic: micLabel, msg });
       return talk.drain();
     }
     ui('voice', { mode, state: !cancel && mode === 'dictate' ? 'thinking' : 'idle' });
     try {
       const text = await c.end(cancel);
-      if (text) await paste(await tidy(text));
+      if (text) {
+        const tidied = await tidy(text, c.where);
+        // Only into the window you dictated in. Transcribing takes a second or
+        // two; if you've moved on meanwhile, the text waits on the clipboard.
+        if (sameWindow(await c.where, await focus.where(false))) await paste(tidied);
+        else {
+          await clipboard.writeText(tidied);
+          ui('voice', { mode, state: 'error', kind: 'moved', msg: 'You switched windows while dictating' });
+        }
+      }
       // a newer recording owns the pill now; this one only finishes its paste
       if (mode === 'dictate' && !stale()) ui('voice', { mode, state: 'idle' });
     } catch (e) {
-      if (!stale()) ui('voice', { mode, state: 'error', msg: e.message });
+      if (mode === 'dictate' && !cancel && c.kept?.length) keep(c.kept, e);
+      else if (!stale()) ui('voice', { mode, state: 'error', msg: e.message });
     }
     talk.drain();   // anything held back while you were talking
   },
 });
 
-/** Wispr-style tidy-up on the hub. Slow, failed or odd-looking -> your exact words. */
-async function tidy(raw) {
-  if (!settings.clean) return raw;
+// Dictation that couldn't be transcribed (no internet, the hub or Gemini
+// unreachable) isn't lost: its audio is kept, and the card's Retry sends it
+// again. One take, the latest; it lives as long as the app does.
+let saved = null;
+const KEEP_MAX = 32000 * 600;   // ten minutes of 16 kHz 16-bit audio
+const seconds = (chunks) => Math.round(chunks.reduce((n, b) => n + b.length, 0) / 32000);
+const offline = (e) => !linkUp
+  || /not connected|did not answer|fetch failed|network|ENOTFOUND|EAI_AGAIN|ECONN|ETIMEDOUT|socket/i.test(e.message);
+function keep(chunks, e) {
+  saved = chunks;
+  console.log(`[voice] dictation failed (${e.message}); kept ${seconds(chunks)}s of audio for Retry`);
+  ui('voice', { mode: 'dictate', state: 'error', kind: 'saved', offline: offline(e), seconds: seconds(chunks), msg: e.message });
+}
+ipcMain.handle('retry', async () => {
+  if (!saved) return { error: 'nothing saved' };
+  if (current) return { error: 'finish the recording first' };
+  const chunks = saved;
+  ui('voice', { mode: 'dictate', state: 'thinking' });
   try {
-    const r = await link.ask({ t: 'clean', text: raw }, 3000);   // ~1 s warm; the first after a start sets up a connection
+    // the whole take arrives at once, so the transcript can take as long as the take
+    const d = dictation(link, { wait: 5000 + seconds(chunks) * 1000 });
+    for (const b of chunks) d.audio(b.toString('base64'));
+    const text = await d.end(false);
+    saved = null;
+    // pasted wherever you are now, told about that window the way a live dictation is
+    if (text) await paste(await tidy(text, focus.where()));
+    if (!current) ui('voice', { mode: 'dictate', state: 'idle' });
+    return { ok: true };
+  } catch (e) {
+    keep(chunks, e);
+    return { error: e.message };
+  }
+});
+
+/** Wispr-style tidy-up on the hub. Slow, failed or odd-looking -> your exact words.
+ *  It's told where the words are going -- only a coarse kind and, in a terminal
+ *  or editor, the coding agent there; the window title stays on this machine. */
+async function tidy(raw, found) {
+  if (!settings.clean) return raw;
+  const { kind, agent, confidence } = classify((await found) || {});
+  console.log(`[voice] typing into: ${kind || 'unknown'}${agent ? ` · ${agent} (${confidence} confidence)` : ''}`);
+  try {
+    const r = await link.ask({ t: 'clean', text: raw, where: { kind, agent } }, 3000);   // ~1 s warm; the first after a start sets up a connection
     if (r.kept) console.log(`[voice] pasted your exact words: ${r.kept}`);
     return r.text;
   } catch (e) {
@@ -179,9 +234,12 @@ async function paste(text) {
   }
   await clipboard.writeText(text);
   keys.paste();
-  // give the target app time to read the paste before putting yours back;
-  // an empty clipboard keeps the dictation, which is handy anyway
-  if (saved.length) setTimeout(() => clipboard.write(saved).catch(() => {}), 500);
+  // give the target app time to read the paste before putting yours back --
+  // unless you've copied something since, which is yours now. An empty
+  // clipboard keeps the dictation, which is handy anyway.
+  if (saved.length) setTimeout(async () => {
+    try { if ((await clipboard.readText()) === text) await clipboard.write(saved); } catch { /* keep what's there */ }
+  }, 500);
 }
 
 function createWindow() {
@@ -224,13 +282,14 @@ app.whenReady().then(async () => {
   }
 });
 app.on('window-all-closed', () => app.quit());
-app.on('before-quit', () => { sessions.stopAll(); keys?.stop(); });
+app.on('before-quit', () => { sessions.stopAll(); keys?.stop(); focus.stop(); });
 
 // 16 kHz 16-bit mono from the pill: note how loud it got, then pass it on
 ipcMain.on('audio', (_e, bytes) => {
   if (!current) return;
   const b = Buffer.from(bytes);
   for (let i = 0; i + 1 < b.length; i += 2) current.peak = Math.max(current.peak, Math.abs(b.readInt16LE(i)));
+  if (current.kept && current.bytes < KEEP_MAX) current.kept.push(b);   // dictation: kept in case it can't be sent
   current.bytes += b.length;
   current.audio(b.toString('base64'));
 });
@@ -238,6 +297,13 @@ ipcMain.on('miclabel', (_e, label) => {
   if (typeof label !== 'string' || label === micLabel) return;
   micLabel = label.slice(0, 120);
   console.log(`[mic] using ${micLabel}`);
+});
+// the pill's ✓ and ✕ finish or discard a recording, as the hotkey would
+ipcMain.on('voice-end', (_e, cancel) => hk.finish(cancel === true));
+// a card's "Read it": that session's last message, word for word
+ipcMain.handle('read', (_e, id) => {
+  const a = roster.find((x) => x.id === id);
+  return a?.last ? readAloud(a.last) : { error: 'nothing to read yet' };
 });
 // the pill tells us when the mouse is over it, so clicks land there and nowhere else
 ipcMain.on('hit', (_e, over) => win.setIgnoreMouseEvents(!over, { forward: true }));
