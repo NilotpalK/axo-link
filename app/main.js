@@ -3,7 +3,7 @@ const { app, BrowserWindow, ipcMain, dialog, screen, clipboard, ClipboardItem, s
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
-const { Sessions } = require('../shared/agent');
+const { Sessions } = require('../agents/sessions');
 const { startHub, loadEnv } = require('../hub/hub');
 loadEnv();   // GEMINI_API_KEY and friends, from .env, before anything reads them
 const { connect } = require('../shared/link');

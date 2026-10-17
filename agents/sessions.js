@@ -1,136 +1,18 @@
 'use strict';
-// Spawns agent CLIs, parses their NDJSON event stream, tracks session state.
-// Per-vendor protocol lives in VENDORS; verified against OpenMausBot's
-// server/drivers/claude.ts (Apache-2.0, github.com/milind-soni/OpenMausBot)
-// and against the shipping `claude` binary's own schema.
+// Runs agent CLIs headless for the pill (spawned sessions), parses their
+// event stream through the agent's own module, and tracks each session's
+// state. Agent-specific protocol lives in agents/<agent>/spawned.js.
 const { spawn } = require('node:child_process');
 const { randomUUID } = require('node:crypto');
 const { EventEmitter } = require('node:events');
 const readline = require('node:readline');
+const { brief } = require('./summary');
 
-const blockText = (msg) => (Array.isArray(msg?.content) ? msg.content : [])
-  .filter((b) => b.type === 'text')
-  .map((b) => b.text)
-  .join('')
-  .trim();
-
-/** First two sentences, hard-capped. This is what gets spoken, so it has to
- *  stand alone -- no "as mentioned above". */
-const brief = (s, max = 200) => {
-  const t = String(s || '').replace(/\s+/g, ' ').trim();
-  if (!t) return '';
-  const m = t.match(/^.*?[.!?](?:\s+.*?[.!?])?(?=\s|$)/);
-  const out = m ? m[0] : t;
-  return out.length > max ? out.slice(0, max - 1).trimEnd() + '\u2026' : out;
-};
-
-/** a turn that ends on a question is waiting on an answer, not just done */
-const kindOf = (summary) => (/\?["')\]]*\s*$/.test(summary) ? 'question' : 'finished');
-
-/** "Edit x3, Bash x2" -- what it did, without asking a model to summarise. */
-const tally = (names) => {
-  const c = new Map();
-  for (const n of names) c.set(n, (c.get(n) || 0) + 1);
-  return [...c].map(([n, k]) => (k > 1 ? `${n} \u00d7${k}` : n)).join(', ');
-};
-
-/** The interesting half of a tool call, for "wants to run: Bash(rm -rf /)".
- *  Whole, not a preview: you approve what you read, so it can't be cut short.
- *  The cap only stops a pathological input from flooding the pill. */
-const argText = (input) => {
-  const v = input?.command ?? input?.file_path ?? input?.path ?? input?.pattern
-    ?? input?.url ?? (input && JSON.stringify(input));
-  const s = String(v ?? '').replace(/\s+/g, ' ').trim();
-  return s.length > 2000 ? s.slice(0, 1999) + '\u2026' : s;
-};
-
-// ponytail: a plain object per vendor, not a driver class. codex/grok slot in
-// as two more entries with different args, no class hierarchy.
+// ponytail: a plain object per agent, not a driver class. codex/grok slot in
+// as more entries with different args, no class hierarchy.
 const VENDORS = {
-  claude: {
-    cmd: 'claude',
-    args: (sid) => [
-      '-p',
-      '--output-format', 'stream-json',
-      '--input-format', 'stream-json',
-      '--verbose',                        // required by stream-json output
-      '--permission-mode', 'acceptEdits',
-      // anything acceptEdits won't auto-allow comes back to us as a
-      // control_request, and the CLI pauses mid-turn until we answer it
-      '--permission-prompt-tool', 'stdio',
-      '--session-id', sid,
-    ],
-    write: (t) => JSON.stringify({ type: 'user', message: { role: 'user', content: t } }) + '\n',
-    answer: (ask, allow, why) => JSON.stringify({
-      type: 'control_response',
-      response: {
-        subtype: 'success',
-        request_id: ask.id,
-        response: allow ? { behavior: 'allow', updatedInput: ask.input } : { behavior: 'deny', message: why },
-      },
-    }) + '\n',
-    // (line, per-turn scratch, write-to-stdin) -> state patch, or null for lines we ignore
-    parse: (o, turn, reply) => {
-      if (o.type === 'system' && o.subtype === 'init') return { model: o.model };
-
-      // Mid-turn permission prompt. Shape read out of claude 2.1.296:
-      // {type:'control_request', request_id, request:{subtype:'can_use_tool', tool_name, input, ...}}
-      if (o.type === 'control_request') {
-        const r = o.request || {};
-        if (r.subtype !== 'can_use_tool') {
-          // never leave the CLI blocked on a request we don't handle
-          reply(JSON.stringify({
-            type: 'control_response',
-            response: { subtype: 'error', request_id: o.request_id, error: `unsupported: ${r.subtype}` },
-          }) + '\n');
-          return null;
-        }
-        turn.asks.push({ id: o.request_id, input: r.input, label: `${r.tool_name}(${argText(r.input)})` });
-        return asking(turn);
-      }
-      if (o.type === 'control_cancel_request') {
-        if (!turn.asks.some((a) => a.id === o.request_id)) return null;
-        turn.asks = turn.asks.filter((a) => a.id !== o.request_id);
-        return turn.asks.length ? asking(turn) : { state: 'running', waiting_kind: null, pending: [], pending_ids: [] };
-      }
-
-      if (o.type === 'assistant') {
-        for (const b of Array.isArray(o.message?.content) ? o.message.content : []) {
-          if (b.type === 'tool_use') turn.tools.push(b.name);
-        }
-        const t = blockText(o.message);
-        if (!t) return null;
-        turn.text = t;
-        return { last: t };
-      }
-
-      if (o.type === 'result') {
-        // approvals are answered mid-turn now, so a settled turn is never
-        // waiting on one -- anything in permission_denials we denied ourselves
-        const summary = brief(o.result || turn.text);
-        const did = tally(turn.tools);
-        // the turn ends here, not when you send: a reply sent mid-task goes
-        // into the running turn (claude 2.1.301: one result covers both)
-        Object.assign(turn, freshTurn());
-        return {
-          state: o.is_error === true ? 'error' : 'waiting',
-          waiting_kind: kindOf(summary),
-          pending: [], pending_ids: [],
-          summary, did,
-        };
-      }
-      return null;
-    },
-  },
+  claude: require('./claude/spawned'),
 };
-
-const freshTurn = () => ({ tools: [], text: '', asks: [] });
-const asking = (turn) => ({
-  state: 'waiting', waiting_kind: 'approval_request',
-  pending: turn.asks.map((a) => a.label),
-  pending_ids: turn.asks.map((a) => a.id),   // what an approval has to name
-  summary: brief(turn.text), did: tally(turn.tools),
-});
 
 class Sessions extends EventEmitter {
   #procs = new Map();   // id -> { child, vendor, stderr, turn }
@@ -157,7 +39,7 @@ class Sessions extends EventEmitter {
       stdio: ['pipe', 'pipe', 'pipe'],
       shell: process.platform === 'win32',
     });
-    const proc = { child, vendor, stderr: '', turn: freshTurn() };
+    const proc = { child, vendor, stderr: '', turn: v.turn() };
     this.#procs.set(id, proc);
     this.#set(id, {
       id, vendor, cwd,
@@ -266,4 +148,4 @@ class Sessions extends EventEmitter {
   }
 }
 
-module.exports = { Sessions, VENDORS, brief, tally, argText, kindOf };
+module.exports = { Sessions, VENDORS };

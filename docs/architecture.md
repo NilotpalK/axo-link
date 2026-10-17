@@ -123,6 +123,7 @@ sequenceDiagram
 | Talk to it any time | yes | yes | no: only when it pauses, in away mode; or "bring it in" |
 | Approve / deny | yes | in its terminal for now (see below) | yes, while the hook is held |
 | Built | yes | yes | after |
+| Code | `agents/<agent>/spawned.js`, run by `agents/sessions.js` | `agents/<agent>/launched/` | `agents/<agent>/attached/` |
 
 Answering a launched session's permission prompt from axo is open. The
 documented route is the PermissionRequest hook returning a decision, but the

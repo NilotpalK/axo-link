@@ -174,7 +174,7 @@ refused outright. `AXO_TOKEN=… node hub/hub.js` runs the hub standalone.
 npm test
 ```
 
-Thirty tests, next to the code they check. Against a fake CLI: turn settling, the `did` tally,
+Forty-two tests, next to the code they check. Against a fake CLI: turn settling, the `did` tally,
 `waiting_kind`, mid-turn approve/deny, approvals bound to the requests shown,
 cancelled prompts, crash vs. stop. Against a real hub: one roster across
 machines, routing to the owning machine, offline reported, wrong tokens and
@@ -211,11 +211,15 @@ One folder per thing that runs. Each test sits next to the file it checks.
 | `app/preload.js` | context bridge |
 | `app/voice.js` | the two Gemini Live sessions (dictation, axo) and axo's tools |
 | `app/keys.js` | global hold-to-talk hotkeys: the state machine, plus the OS keyboard hook |
+| **`agents/`** | **everything that runs, follows or drives a coding agent: one folder per agent, split by the three kinds of session** |
+| `agents/summary.js` | how any session's turn is summed up: a spoken-length brief, what it did, what it wants to run, question or finished |
+| `agents/sessions.js` | runs agents headless for the pill (spawned sessions): spawn, state, mid-turn approvals, stop. Agents are a plain object, not a class hierarchy |
+| `agents/claude/spawned.js` | Claude, spawned: `claude -p` arguments and its stream-json protocol |
+| `agents/claude/launched/launcher.js` | Claude, launched: `axo claude`, the real Claude Code in a pseudo-terminal, registered with the hub, state from its hooks |
 | **`cli/`** | **the `axo` command** |
-| `cli/axo.js` | `axo claude`: the real Claude Code in a pseudo-terminal, registered with the hub, state from its hooks |
-| **`shared/`** | **used by the app and the CLI** |
+| `cli/axo.js` | picks the agent's launcher: `axo claude` → `agents/claude/launched/` |
+| **`shared/`** | **used by the app and the launchers** |
 | `shared/link.js` | the one outbound socket to the hub: connector + pill, request/reply, redials forever |
-| `shared/agent.js` | pill-started sessions: spawn, NDJSON parse, state machine, mid-turn approvals. Vendors are a plain object, not a class hierarchy |
 | **`scripts/`** | |
 | `scripts/smoke.js` | the live check against the real `claude` binary |
 

@@ -5,7 +5,7 @@
 // this proves the CLI still behaves the way the parser assumes.
 //   node scripts/smoke.js
 const os = require('node:os');
-const { Sessions } = require('../shared/agent');
+const { Sessions } = require('../agents/sessions');
 
 const s = new Sessions();
 const t0 = Date.now();
