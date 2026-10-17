@@ -63,7 +63,7 @@ while (($line = [Console]::In.ReadLine()) -ne $null) {
       foreach ($c in $kids[$todo.Pop()]) { $cmd = "$($c.Name) $($c.CommandLine)"; $procs += $cmd.Substring(0, [Math]::Min(300, $cmd.Length)); $todo.Push([int]$c.ProcessId) }
     }
   }
-  [Console]::Out.WriteLine((@{ app = "$($p.ProcessName)"; title = $sb.ToString(); procs = $procs } | ConvertTo-Json -Compress -Depth 3))
+  [Console]::Out.WriteLine((@{ app = "$($p.ProcessName)"; title = $sb.ToString(); procs = $procs; hwnd = $h.ToInt64() } | ConvertTo-Json -Compress -Depth 3))
   [Console]::Out.Flush()
 }`;
 
@@ -105,4 +105,9 @@ function focusWatcher({ timeout = 2500 } = {}) {
   };
 }
 
-module.exports = { classify, focusWatcher, AGENTS };
+/** Still the window you started in? By its handle, not its title: a terminal
+ *  running Claude retitles itself as it works. Unknown (not Windows, too slow)
+ *  counts as the same, so the paste goes ahead as it always did. */
+const sameWindow = (a, b) => !a?.hwnd || !b?.hwnd || a.hwnd === b.hwnd;
+
+module.exports = { classify, focusWatcher, sameWindow, AGENTS };

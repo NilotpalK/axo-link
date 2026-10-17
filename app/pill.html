@@ -23,6 +23,11 @@
     --quick:     120ms cubic-bezier(.2, .9, .3, 1);
   }
   * { box-sizing: border-box; margin: 0; }
+  /* thin dark scrollbars: a grey thumb on nothing, no light track, no arrows */
+  * { scrollbar-width: thin; scrollbar-color: #2c2c30 transparent; }
+  /* dark dropdown lists. Only here: color-scheme on the page would paint the
+     transparent window's whole background dark */
+  select { color-scheme: dark; }
   html, body { height: 100%; }
   body {
     font: 14px/1.4 var(--font); color: var(--text); background: transparent;
@@ -118,7 +123,7 @@
   }
   body.open #cards { opacity: 0; pointer-events: none; }
   .card {
-    width: 384px; padding: 16px 14px 14px 18px; border-radius: 22px;
+    width: min(384px, calc(100vw - 36px)); padding: 16px 14px 14px 18px; border-radius: 22px;
     background: var(--bg); border: 1px solid var(--line-2); box-shadow: 0 4px 12px rgba(0, 0, 0, .45);
     transform-origin: 50% 100%; animation: card-in var(--morph) var(--spring) both;
   }
@@ -166,7 +171,7 @@
 
   /* ---- the panel, springing up out of the bar ---- */
   #panel {
-    width: 400px; max-height: 384px; display: flex; flex-direction: column;
+    width: min(400px, calc(100vw - 20px)); max-height: 384px; display: flex; flex-direction: column;
     background: var(--bg); border: 1px solid var(--line-2); border-radius: 22px; overflow: hidden;
     box-shadow: 0 2px 8px rgba(0, 0, 0, .4);
     transform-origin: 50% 100%;
@@ -221,8 +226,20 @@
   #settings { flex: 1; min-height: 0; overflow-y: auto; padding: 4px 18px 16px; }
   .srow { display: flex; align-items: center; gap: 10px; padding: 9px 0; font-size: 14px; }
   .srow > span, .srow > label { flex: 1; }
+  /* One right-hand column, the same width in every row, so the hotkey boxes and
+     the dropdowns start at the same edge and narrow together. A dropdown is
+     never an empty sliver; long device names are cut with an ellipsis. */
+  .srow { --ctl: min(224px, 64%); }
+  .srow > label { flex: 1 0 auto; }
+  .ctl { flex: none; width: var(--ctl); display: flex; align-items: center; gap: 8px; }
+  /* both hotkey boxes the same size, and as tall as the dropdowns beside them */
+  .ctl kbd {
+    flex: 1; min-width: 0; min-height: 33px; border-radius: 9px; line-height: 1.25; text-align: center;
+    display: flex; align-items: center; justify-content: center;
+  }
   .srow select {
-    max-width: 200px; font: inherit; font-size: 13px; padding: 6px 8px; border-radius: 9px;
+    flex: none; width: var(--ctl); text-overflow: ellipsis;
+    font: inherit; font-size: 13px; padding: 6px 8px; border-radius: 9px;
     border: 1px solid var(--line-2); background: var(--bg-3); color: var(--text); outline: none;
   }
   .srow select:focus { border-color: var(--dim); }
@@ -255,8 +272,8 @@
     <div id="tabs"></div>
     <div id="roster"></div>
     <div id="settings">
-      <div class="srow"><span>Dictate</span><kbd id="k-dictate"></kbd><button class="btn ghost" data-rec="dictate">Change</button></div>
-      <div class="srow"><span>Talk to axo</span><kbd id="k-talk"></kbd><button class="btn ghost" data-rec="talk">Change</button></div>
+      <div class="srow"><span>Dictate</span><div class="ctl"><kbd id="k-dictate"></kbd><button class="btn ghost" data-rec="dictate">Change</button></div></div>
+      <div class="srow"><span>Talk to axo</span><div class="ctl"><kbd id="k-talk"></kbd><button class="btn ghost" data-rec="talk">Change</button></div></div>
       <div class="srow"><label for="mic">Microphone</label><select id="mic"></select></div>
       <div id="meter" role="meter" aria-label="Microphone level" title="Speak: this bar should move"><i></i></div>
       <p id="mic-using" class="hint"></p>
@@ -294,6 +311,30 @@
 <script>
   const $ = (s) => document.querySelector(s);
   const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+  // Opened on its own (a browser preview of this file, not the app): a stand-in
+  // for the app's bridge, so the UI still draws instead of throwing. Nothing in
+  // it works; the mic says it isn't available here.
+  if (!window.axo) {
+    const SETTINGS = { dictate: 'Ctrl + Win', talk: 'Ctrl + Win + Alt', mode: 'desk', mic: '', speaker: '', clean: true };   // as main's view() sends them
+    window.axo = new Proxy({}, { get: (_, k) => async () => (k === 'settings' || k === 'record' ? SETTINGS : k === 'list' ? [] : undefined) });
+  }
+
+  /** What went wrong with the mic, in words: never a raw JavaScript error. */
+  function micProblem(e) {
+    if (!navigator.mediaDevices) return 'The microphone isn\'t available here. Open axo-link from the app.';
+    return {
+      NotAllowedError: 'Microphone access is blocked. On Windows: Settings → Privacy & security → Microphone → let desktop apps use it.',
+      SecurityError: 'Microphone access is blocked for axo-link.',
+      NotFoundError: 'No microphone found. Plug one in, or pick another above.',
+      NotReadableError: 'The microphone is busy or switched off. Another app may be holding it.',
+      AbortError: 'The microphone stopped before it started. Try again.',
+      OverconstrainedError: 'Your chosen microphone isn\'t connected. Pick another above.',
+    }[e?.name] || 'The microphone couldn\'t be opened. Try another one above.';
+  }
+  // a message from main that's a JavaScript error, not a sentence for people, is replaced
+  const human = (msg) => (/TypeError|ReferenceError|SyntaxError|Cannot read prop|is not a function|is not defined|undefined/.test(msg)
+    ? 'Something broke inside axo-link. Restart it if this keeps happening.' : msg);
 
   /* ---------- icons: drawn on a 24 grid, stroked in the text colour ---------- */
   const svg = (d, s = 16) => '<svg width="' + s + '" height="' + s + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
@@ -441,6 +482,11 @@
         '. A virtual mic sends nothing when its source isn\'t running.' : 'We didn\'t hear anything. The mic may be muted or too far away.',
       actions: [{ label: 'Choose mic', run: openSettings }],
     });
+    // you switched windows before the text was ready: it's on the clipboard instead
+    if (v.kind === 'moved') return card('error', {
+      icon: ICON.alert, title: 'You switched windows while dictating',
+      body: 'Your text is on the clipboard. Paste it where you want it.', life: 10000,
+    });
     // dictation that couldn't be transcribed: main kept the audio, Retry sends it again
     if (v.kind === 'saved') return card('saved', {
       icon: v.offline ? ICON.unlink : ICON.mic, tone: 'bad', life: 0,
@@ -450,8 +496,8 @@
     });
     if (/GEMINI_API_KEY/.test(msg)) return card('error', { icon: ICON.key, tone: 'bad', title: 'Voice isn\'t set up', body: msg, life: 12000 });
     if (/allowance|quota|429/i.test(msg)) return card('error', { icon: ICON.alert, tone: 'bad', title: 'Gemini limit reached', body: msg, life: 12000 });
-    if (/^microphone/i.test(msg)) return card('error', { icon: ICON.mic, tone: 'bad', title: 'Microphone unavailable', body: msg, actions: [{ label: 'Choose mic', run: openSettings }] });
-    card('error', { icon: ICON.alert, tone: 'bad', title: 'Something went wrong', body: msg });
+    if (v.kind === 'mic') return card('error', { icon: ICON.mic, tone: 'bad', title: 'Microphone unavailable', body: msg, actions: [{ label: 'Choose mic', run: openSettings }] });
+    card('error', { icon: ICON.alert, tone: 'bad', title: 'Something went wrong', body: human(msg) });
   }
 
   // an approval card for each new request, gone once it's answered
@@ -677,7 +723,7 @@
     voiceMode = v.mode || voiceMode;
     const on = voice === 'listening' || voice === 'locked';
     if (on) {
-      micOn(voiceMode).catch((e) => { voice = 'idle'; errorCard({ msg: 'microphone: ' + e.message }); paint(); });
+      micOn(voiceMode).catch((e) => { voice = 'idle'; errorCard({ kind: 'mic', msg: micProblem(e) }); paint(); });
       if (!wasOn) chime('start');
     } else {
       micOff();
@@ -786,7 +832,7 @@
 
     // the Settings tab doubles as a mic test: the meter moves while it's open
     const preview = tab === 'settings' && has('open');
-    if (preview && !previewing) micOpen().then(() => wave.wake(), (e) => { $('#set-err').textContent = 'Microphone: ' + e.message; });
+    if (preview && !previewing) micOpen().then(() => wave.wake(), (e) => { $('#set-err').textContent = micProblem(e); });
     else if (!preview && previewing) closeMic();
     previewing = preview;
 
@@ -824,14 +870,19 @@
 
   /* ---------- mic and speaker pickers ---------- */
   async function devices() {
-    let all = await navigator.mediaDevices.enumerateDevices();
-    // device names stay hidden until the mic has been opened once
-    if (all.some((d) => d.kind === 'audioinput' && !d.label)) {
-      try {
-        (await navigator.mediaDevices.getUserMedia({ audio: true })).getTracks().forEach((t) => t.stop());
-        all = await navigator.mediaDevices.enumerateDevices();
-      } catch { /* no permission: list unnamed devices */ }
-    }
+    // whatever happens, both lists get at least "System default", so neither
+    // dropdown is ever an empty sliver
+    let all = [];
+    try {
+      all = await navigator.mediaDevices.enumerateDevices();
+      // device names stay hidden until the mic has been opened once
+      if (all.some((d) => d.kind === 'audioinput' && !d.label)) {
+        try {
+          (await navigator.mediaDevices.getUserMedia({ audio: true })).getTracks().forEach((t) => t.stop());
+          all = await navigator.mediaDevices.enumerateDevices();
+        } catch { /* no permission: list unnamed devices */ }
+      }
+    } catch (e) { $('#set-err').textContent = micProblem(e); }
     const fill = (sel, kind, cur) => {
       // Windows adds 'default' and 'communications' aliases; "System default" covers them
       const real = all.filter((d) => d.kind === kind && d.deviceId !== 'default' && d.deviceId !== 'communications');
@@ -852,7 +903,8 @@
   let knownMics = null, looks = 0;
   async function newMic() {
     const look = ++looks;
-    const now = micsIn(await navigator.mediaDevices.enumerateDevices());
+    let now;
+    try { now = micsIn(await navigator.mediaDevices.enumerateDevices()); } catch { return; }   // no device list here
     if (look !== looks) return;   // a newer look started meanwhile: only the latest counts
     const before = knownMics;
     knownMics = now;
@@ -874,13 +926,13 @@
     }
   }
   newMic();
-  navigator.mediaDevices.ondevicechange = () => {
+  if (navigator.mediaDevices) navigator.mediaDevices.ondevicechange = () => {
     newMic();
     if (tab === 'settings') devices();
     // your pick may have just connected (Bluetooth takes a moment)
     if (micFallback && !sending) {
       closeMic();
-      if (previewing) micOpen().catch((e) => { $('#set-err').textContent = 'Microphone: ' + e.message; });
+      if (previewing) micOpen().catch((e) => { $('#set-err').textContent = micProblem(e); });
     }
   };
   for (const kind of ['mic', 'speaker']) {
@@ -903,7 +955,7 @@
     settings = s;
     if (s.mic !== was.mic) {   // reopen on the new mic
       closeMic();
-      if (previewing) micOpen().catch((e) => { $('#set-err').textContent = 'Microphone: ' + e.message; });
+      if (previewing) micOpen().catch((e) => { $('#set-err').textContent = micProblem(e); });
     }
     if (s.speaker !== was.speaker) { speaker(); sink().then(() => chime('start')); }   // a ping on the new speaker
     render();

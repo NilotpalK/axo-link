@@ -4,7 +4,7 @@
 // on is not, so only a terminal or an editor can have an agent at all.
 const test = require('node:test');
 const assert = require('node:assert');
-const { classify } = require('./focus');
+const { classify, sameWindow } = require('./focus');
 
 test('a coding agent named in the terminal title is a strong sign; one merely running under it, a weak one', () => {
   assert.deepEqual(classify({ app: 'WindowsTerminal', title: 'claude - deskill' }), { kind: 'terminal', agent: 'claude', confidence: 'high' });
@@ -25,4 +25,12 @@ test('outside a terminal or editor there is no agent, and a browser tab says wha
   assert.equal(classify({ app: 'slack', title: 'claude-team' }).kind, 'chat');
   assert.deepEqual(classify({ app: 'mspaint', title: '' }), { kind: null, agent: null, confidence: null });
   assert.deepEqual(classify(), { kind: null, agent: null, confidence: null });
+});
+
+test('a dictation pastes only into the window it started in, judged by handle, not title', () => {
+  const claude = { app: 'WindowsTerminal', title: '✳ Claude Code', hwnd: 67386 };
+  assert.ok(sameWindow(claude, { ...claude, title: '· Claude Code — running tests' }), 'Claude retitled its terminal: same window');
+  assert.ok(!sameWindow(claude, { app: 'WindowsTerminal', title: '✳ Claude Code', hwnd: 99001 }), 'another terminal, even with the same title');
+  assert.ok(!sameWindow(claude, { app: 'chrome', title: 'Inbox', hwnd: 5120 }));
+  assert.ok(sameWindow(null, claude) && sameWindow(claude, null), "can't tell (not Windows, too slow): paste as before");
 });

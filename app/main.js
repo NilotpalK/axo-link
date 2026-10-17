@@ -8,7 +8,7 @@ const { startHub, loadEnv } = require('../hub/hub');
 loadEnv();   // GEMINI_API_KEY and friends, from .env, before anything reads them
 const { connect } = require('../shared/link');
 const { hotkeys, invalid, label, hook } = require('./keys');
-const { focusWatcher, classify } = require('./focus');
+const { focusWatcher, classify, sameWindow } = require('./focus');
 const { dictation, secretary, toolRunner, update, speakable } = require('./voice');
 
 // A fixed transparent window at the bottom centre. The pill draws inside it
@@ -150,7 +150,16 @@ const hk = hotkeys({ dictate: settings.dictate, talk: settings.talk }, {
     ui('voice', { mode, state: !cancel && mode === 'dictate' ? 'thinking' : 'idle' });
     try {
       const text = await c.end(cancel);
-      if (text) await paste(await tidy(text, c.where));
+      if (text) {
+        const tidied = await tidy(text, c.where);
+        // Only into the window you dictated in. Transcribing takes a second or
+        // two; if you've moved on meanwhile, the text waits on the clipboard.
+        if (sameWindow(await c.where, await focus.where(false))) await paste(tidied);
+        else {
+          await clipboard.writeText(tidied);
+          ui('voice', { mode, state: 'error', kind: 'moved', msg: 'You switched windows while dictating' });
+        }
+      }
       // a newer recording owns the pill now; this one only finishes its paste
       if (mode === 'dictate' && !stale()) ui('voice', { mode, state: 'idle' });
     } catch (e) {
@@ -225,9 +234,12 @@ async function paste(text) {
   }
   await clipboard.writeText(text);
   keys.paste();
-  // give the target app time to read the paste before putting yours back;
-  // an empty clipboard keeps the dictation, which is handy anyway
-  if (saved.length) setTimeout(() => clipboard.write(saved).catch(() => {}), 500);
+  // give the target app time to read the paste before putting yours back --
+  // unless you've copied something since, which is yours now. An empty
+  // clipboard keeps the dictation, which is handy anyway.
+  if (saved.length) setTimeout(async () => {
+    try { if ((await clipboard.readText()) === text) await clipboard.write(saved); } catch { /* keep what's there */ }
+  }, 500);
 }
 
 function createWindow() {
