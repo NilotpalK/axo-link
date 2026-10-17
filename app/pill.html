@@ -440,6 +440,13 @@
         '. A virtual mic sends nothing when its source isn\'t running.' : 'We didn\'t hear anything. The mic may be muted or too far away.',
       actions: [{ label: 'Choose mic', run: openSettings }],
     });
+    // dictation that couldn't be transcribed: main kept the audio, Retry sends it again
+    if (v.kind === 'saved') return card('saved', {
+      icon: v.offline ? ICON.unlink : ICON.mic, tone: 'bad', life: 0,
+      title: v.offline ? 'No internet — your audio is saved' : 'Couldn\'t transcribe — your audio is saved',
+      body: v.seconds + ' s of dictation kept. Retry pastes it wherever your cursor is then.',
+      actions: [{ label: 'Retry', run: () => axo.retry() }],
+    });
     if (/GEMINI_API_KEY/.test(msg)) return card('error', { icon: ICON.key, tone: 'bad', title: 'Voice isn\'t set up', body: msg, life: 12000 });
     if (/allowance|quota|429/i.test(msg)) return card('error', { icon: ICON.alert, tone: 'bad', title: 'Gemini limit reached', body: msg, life: 12000 });
     if (/^microphone/i.test(msg)) return card('error', { icon: ICON.mic, tone: 'bad', title: 'Microphone unavailable', body: msg, actions: [{ label: 'Choose mic', run: openSettings }] });
@@ -507,6 +514,22 @@
   // warm: every talk press passes through dictation on the way to Alt.
   const mics = {};   // mode -> its open mic
   let sending = null, micT, micFallback = false;   // sending: the mode whose mic goes to the hub
+  let micName = 'the microphone';
+  // A recording that hears dead digital silence -- not a quiet room, which
+  // still hisses -- is a muted or switched-off mic: say so while you're still
+  // holding the key, not after you let go.
+  let hush = null;   // this recording: since when it has heard nothing, and whether the card is up
+  function listenFor(rms) {
+    if (!hush) return;
+    if (rms > 1e-4) { if (hush.shown) drop('muted'); hush = null; return; }
+    hush.since ||= performance.now();
+    if (!hush.shown && performance.now() - hush.since > 1500) {
+      hush.shown = true;
+      card('muted', { icon: ICON.mic, tone: 'bad', title: 'Is your mic muted?', life: 0,
+        body: 'Nothing is coming from ' + micName + '.',
+        actions: [{ label: 'Choose mic', run: openSettings }] });
+    }
+  }
   const AUDIO = {
     dictate: { channelCount: 1, echoCancellation: false, noiseSuppression: false, autoGainControl: false },
     talk: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
@@ -562,12 +585,12 @@
       const node = new AudioWorkletNode(ctx, 'tap');
       node.port.onmessage = ({ data }) => {
         if ((sending || 'dictate') !== mode) return;   // the other mode's mic is listening to the same room
-        if (typeof data === 'number') return wave.set(data);
+        if (typeof data === 'number') { if (sending) listenFor(data); return wave.set(data); }
         if (sending) axo.audio(new Uint8Array(data.buffer));
       };
       ctx.createMediaStreamSource(stream).connect(node);
       // say which mic this really is: a "default" can be a virtual one sending silence
-      const label = stream.getAudioTracks()[0]?.label || 'an unnamed microphone';
+      const label = micName = stream.getAudioTracks()[0]?.label || 'an unnamed microphone';
       $('#mic-using').textContent = 'Using ' + label +
         (micFallback ? ' — your pick could not be opened (' + why + '), will retry' : '');
       axo.micLabel(label);
@@ -577,6 +600,7 @@
   }
   function micOn(mode) {
     if (micFallback) closeMic();   // stuck on the default: try your pick again
+    if (sending !== mode) hush = { since: 0, shown: false };   // a new recording, not listening → locked
     sending = mode;
     return micOpen(mode);
   }
@@ -656,6 +680,8 @@
       if (!wasOn) chime('start');
     } else {
       micOff();
+      hush = null;
+      drop('muted');   // over: if it was silent, main's "No audio received" card takes it from here
       if (wasOn) chime('stop');
     }
     paint();
@@ -810,7 +836,40 @@
     fill($('#mic'), 'audioinput', settings.mic);
     fill($('#speaker'), 'audiooutput', settings.speaker);
   }
+  // A mic that wasn't connected before and isn't your pick: offer to switch
+  // to it. "Don't switch" is remembered for that mic, so it doesn't ask again
+  // every time those AirPods come out of their case.
+  const ALIASES = new Set(['', 'default', 'communications']);   // '' = ids hidden before mic permission
+  const micsIn = (all) => new Map(all.filter((d) => d.kind === 'audioinput' && !ALIASES.has(d.deviceId))
+    .map((d) => [d.deviceId, d.label]));
+  const declined = new Set((() => { try { return JSON.parse(localStorage.getItem('declinedMics')) || []; } catch { return []; } })());
+  let knownMics = null, looks = 0;
+  async function newMic() {
+    const look = ++looks;
+    const now = micsIn(await navigator.mediaDevices.enumerateDevices());
+    if (look !== looks) return;   // a newer look started meanwhile: only the latest counts
+    const before = knownMics;
+    knownMics = now;
+    if (!before?.size) return;   // the first look, or ids still hidden: nothing to compare with
+    for (const [id, label] of now) {
+      if (before.has(id) || id === settings.mic || declined.has(id)) continue;
+      card('newmic', {
+        icon: ICON.mic, title: (label || 'A new microphone') + ' detected',
+        body: 'Would you like to use this mic for axo?', life: 20000,
+        actions: [
+          { label: "Don't switch", ghost: true, run: () => {
+            declined.add(id);
+            try { localStorage.setItem('declinedMics', JSON.stringify([...declined])); } catch { /* asks again next time */ }
+          } },
+          { label: 'Switch', run: () => axo.setDevice('mic', id) },
+        ],
+      });
+      return;   // one card; several mics at once (a dock) ask about the first
+    }
+  }
+  newMic();
   navigator.mediaDevices.ondevicechange = () => {
+    newMic();
     if (tab === 'settings') devices();
     // your pick may have just connected (Bluetooth takes a moment)
     if (micFallback && !sending) {

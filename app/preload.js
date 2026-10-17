@@ -13,6 +13,7 @@ contextBridge.exposeInMainWorld('axo', {
   deny: (id) => ipcRenderer.invoke('deny', id),
   stop: (id) => ipcRenderer.invoke('stop', id),
   read: (id) => ipcRenderer.invoke('read', id),
+  retry: () => ipcRenderer.invoke('retry'),
   endVoice: (cancel) => ipcRenderer.send('voice-end', cancel),
   settings: () => ipcRenderer.invoke('settings'),
   record: (mode) => ipcRenderer.invoke('record', mode),

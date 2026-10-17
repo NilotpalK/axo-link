@@ -22,7 +22,7 @@ const DEFAULTS = {
 
 const sessions = new Sessions();
 const focus = focusWatcher();   // where you're dictating, asked as each dictation starts
-let win, keys, roster = [], current = null, micLabel = 'the microphone';
+let win, keys, roster = [], current = null, micLabel = 'the microphone', linkUp = false;
 const ui = (channel, value) => win?.webContents.send(channel, value);
 
 const settingsFile = path.join(app.getPath('userData'), 'settings.json');
@@ -67,7 +67,7 @@ const link = connect({
       if (settings.mode === 'away') talk.announce(update(m.agent));
       else { ui('chime', 'hand'); ui('hand', m.agent); }   // the pill shows a card for it
     }
-    else if (m.t === 'link') ui('link', m.up);
+    else if (m.t === 'link') { linkUp = m.up; ui('link', m.up); }
     else if (m.t === 'error') ui('voice', { state: 'error', msg: m.msg });
   },
 });
@@ -129,7 +129,7 @@ const hk = hotkeys({ dictate: settings.dictate, talk: settings.talk }, {
     if (reading) { reading.stop(); reading = null; ui('flush'); }   // you pressed a key: stop reading
     current = Object.assign(mode === 'dictate' ? dictation(link) : talk.listen(), { peak: 0, bytes: 0 });
     // the window you're in now is where the words will go; found while you speak
-    if (mode === 'dictate') current.where = focus.where();
+    if (mode === 'dictate') { current.where = focus.where(); current.kept = []; }
     ui('voice', { mode, state: 'listening' });
   },
   onLock: (mode) => ui('voice', { mode, state: 'locked' }),
@@ -154,10 +154,45 @@ const hk = hotkeys({ dictate: settings.dictate, talk: settings.talk }, {
       // a newer recording owns the pill now; this one only finishes its paste
       if (mode === 'dictate' && !stale()) ui('voice', { mode, state: 'idle' });
     } catch (e) {
-      if (!stale()) ui('voice', { mode, state: 'error', msg: e.message });
+      if (mode === 'dictate' && !cancel && c.kept?.length) keep(c.kept, e);
+      else if (!stale()) ui('voice', { mode, state: 'error', msg: e.message });
     }
     talk.drain();   // anything held back while you were talking
   },
+});
+
+// Dictation that couldn't be transcribed (no internet, the hub or Gemini
+// unreachable) isn't lost: its audio is kept, and the card's Retry sends it
+// again. One take, the latest; it lives as long as the app does.
+let saved = null;
+const KEEP_MAX = 32000 * 600;   // ten minutes of 16 kHz 16-bit audio
+const seconds = (chunks) => Math.round(chunks.reduce((n, b) => n + b.length, 0) / 32000);
+const offline = (e) => !linkUp
+  || /not connected|did not answer|fetch failed|network|ENOTFOUND|EAI_AGAIN|ECONN|ETIMEDOUT|socket/i.test(e.message);
+function keep(chunks, e) {
+  saved = chunks;
+  console.log(`[voice] dictation failed (${e.message}); kept ${seconds(chunks)}s of audio for Retry`);
+  ui('voice', { mode: 'dictate', state: 'error', kind: 'saved', offline: offline(e), seconds: seconds(chunks), msg: e.message });
+}
+ipcMain.handle('retry', async () => {
+  if (!saved) return { error: 'nothing saved' };
+  if (current) return { error: 'finish the recording first' };
+  const chunks = saved;
+  ui('voice', { mode: 'dictate', state: 'thinking' });
+  try {
+    // the whole take arrives at once, so the transcript can take as long as the take
+    const d = dictation(link, { wait: 5000 + seconds(chunks) * 1000 });
+    for (const b of chunks) d.audio(b.toString('base64'));
+    const text = await d.end(false);
+    saved = null;
+    // pasted wherever you are now, told about that window the way a live dictation is
+    if (text) await paste(await tidy(text, focus.where()));
+    if (!current) ui('voice', { mode: 'dictate', state: 'idle' });
+    return { ok: true };
+  } catch (e) {
+    keep(chunks, e);
+    return { error: e.message };
+  }
 });
 
 /** Wispr-style tidy-up on the hub. Slow, failed or odd-looking -> your exact words.
@@ -242,6 +277,7 @@ ipcMain.on('audio', (_e, bytes) => {
   if (!current) return;
   const b = Buffer.from(bytes);
   for (let i = 0; i + 1 < b.length; i += 2) current.peak = Math.max(current.peak, Math.abs(b.readInt16LE(i)));
+  if (current.kept && current.bytes < KEEP_MAX) current.kept.push(b);   // dictation: kept in case it can't be sent
   current.bytes += b.length;
   current.audio(b.toString('base64'));
 });

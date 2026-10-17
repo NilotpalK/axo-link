@@ -38,7 +38,9 @@ function utterance(opening) {
 }
 
 /** speech -> text. A fresh session per key-hold; end() resolves the transcript. */
-function dictation(link) {
+/** wait: how long to give the transcript after you stop. A Retry sends a
+ *  whole take at once, so it passes more than a live dictation needs. */
+function dictation(link, { wait = 5000 } = {}) {
   let text = '', ending = false, settle = () => {}, quiet;
   const u = utterance(open(link, 'dictate', {
     responseModalities: [Modality.TEXT],
@@ -62,7 +64,8 @@ function dictation(link) {
       if (cancel) { u.ready.then((s) => s.close(), () => {}); return ''; }
       const s = await u.ready;
       ending = true;
-      const done = new Promise((r) => { settle = r; quiet = setTimeout(r, 1200); setTimeout(r, 5000); });
+      // nothing heard yet: wait for the first words (or the model's turn end) instead of a quiet gap
+      const done = new Promise((r) => { settle = r; if (text) quiet = setTimeout(r, 1200); setTimeout(r, wait); });
       s.sendRealtimeInput({ activityEnd: {} });
       await done;
       clearTimeout(quiet);
