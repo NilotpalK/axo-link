@@ -8,6 +8,7 @@ const { startHub, loadEnv } = require('../hub/hub');
 loadEnv();   // GEMINI_API_KEY and friends, from .env, before anything reads them
 const { connect } = require('../shared/link');
 const { hotkeys, invalid, label, hook } = require('./keys');
+const { focusWatcher, classify } = require('./focus');
 const { dictation, secretary, toolRunner, update, speakable } = require('./voice');
 
 // A fixed transparent window at the bottom centre. The pill draws inside it
@@ -20,6 +21,7 @@ const DEFAULTS = {
 };
 
 const sessions = new Sessions();
+const focus = focusWatcher();   // where you're dictating, asked as each dictation starts
 let win, keys, roster = [], current = null, micLabel = 'the microphone';
 const ui = (channel, value) => win?.webContents.send(channel, value);
 
@@ -61,7 +63,10 @@ const link = connect({
   onMessage: (m) => {
     if (m.t === 'roster') { roster = m.agents; ui('sessions', roster); }
     // at the desk an agent finishing is a chime and an amber bar; away, axo says it
-    else if (m.t === 'hand') settings.mode === 'away' ? talk.announce(update(m.agent)) : ui('chime', 'hand');
+    else if (m.t === 'hand') {
+      if (settings.mode === 'away') talk.announce(update(m.agent));
+      else { ui('chime', 'hand'); ui('hand', m.agent); }   // the pill shows a card for it
+    }
     else if (m.t === 'link') ui('link', m.up);
     else if (m.t === 'error') ui('voice', { state: 'error', msg: m.msg });
   },
@@ -123,6 +128,8 @@ const hk = hotkeys({ dictate: settings.dictate, talk: settings.talk }, {
   onBegin(mode) {
     if (reading) { reading.stop(); reading = null; ui('flush'); }   // you pressed a key: stop reading
     current = Object.assign(mode === 'dictate' ? dictation(link) : talk.listen(), { peak: 0, bytes: 0 });
+    // the window you're in now is where the words will go; found while you speak
+    if (mode === 'dictate') current.where = focus.where();
     ui('voice', { mode, state: 'listening' });
   },
   onLock: (mode) => ui('voice', { mode, state: 'locked' }),
@@ -137,13 +144,13 @@ const hk = hotkeys({ dictate: settings.dictate, talk: settings.talk }, {
       // all zeros is a dead or virtual device, not a quiet room
       const msg = c.peak === 0 ? `Silence from ${micLabel}. Change mic in Settings.`
         : "Didn't hear anything. Check the microphone in Settings.";
-      ui('voice', { mode, state: 'error', msg });
+      ui('voice', { mode, state: 'error', kind: 'silence', mic: micLabel, msg });
       return talk.drain();
     }
     ui('voice', { mode, state: !cancel && mode === 'dictate' ? 'thinking' : 'idle' });
     try {
       const text = await c.end(cancel);
-      if (text) await paste(await tidy(text));
+      if (text) await paste(await tidy(text, c.where));
       // a newer recording owns the pill now; this one only finishes its paste
       if (mode === 'dictate' && !stale()) ui('voice', { mode, state: 'idle' });
     } catch (e) {
@@ -153,11 +160,15 @@ const hk = hotkeys({ dictate: settings.dictate, talk: settings.talk }, {
   },
 });
 
-/** Wispr-style tidy-up on the hub. Slow, failed or odd-looking -> your exact words. */
-async function tidy(raw) {
+/** Wispr-style tidy-up on the hub. Slow, failed or odd-looking -> your exact words.
+ *  It's told where the words are going -- only a coarse kind and, in a terminal
+ *  or editor, the coding agent there; the window title stays on this machine. */
+async function tidy(raw, found) {
   if (!settings.clean) return raw;
+  const { kind, agent, confidence } = classify((await found) || {});
+  console.log(`[voice] typing into: ${kind || 'unknown'}${agent ? ` · ${agent} (${confidence} confidence)` : ''}`);
   try {
-    const r = await link.ask({ t: 'clean', text: raw }, 3000);   // ~1 s warm; the first after a start sets up a connection
+    const r = await link.ask({ t: 'clean', text: raw, where: { kind, agent } }, 3000);   // ~1 s warm; the first after a start sets up a connection
     if (r.kept) console.log(`[voice] pasted your exact words: ${r.kept}`);
     return r.text;
   } catch (e) {
@@ -224,7 +235,7 @@ app.whenReady().then(async () => {
   }
 });
 app.on('window-all-closed', () => app.quit());
-app.on('before-quit', () => { sessions.stopAll(); keys?.stop(); });
+app.on('before-quit', () => { sessions.stopAll(); keys?.stop(); focus.stop(); });
 
 // 16 kHz 16-bit mono from the pill: note how loud it got, then pass it on
 ipcMain.on('audio', (_e, bytes) => {
@@ -238,6 +249,13 @@ ipcMain.on('miclabel', (_e, label) => {
   if (typeof label !== 'string' || label === micLabel) return;
   micLabel = label.slice(0, 120);
   console.log(`[mic] using ${micLabel}`);
+});
+// the pill's ✓ and ✕ finish or discard a recording, as the hotkey would
+ipcMain.on('voice-end', (_e, cancel) => hk.finish(cancel === true));
+// a card's "Read it": that session's last message, word for word
+ipcMain.handle('read', (_e, id) => {
+  const a = roster.find((x) => x.id === id);
+  return a?.last ? readAloud(a.last) : { error: 'nothing to read yet' };
 });
 // the pill tells us when the mouse is over it, so clicks land there and nowhere else
 ipcMain.on('hit', (_e, over) => win.setIgnoreMouseEvents(!over, { forward: true }));

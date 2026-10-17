@@ -50,6 +50,8 @@ function hotkeys(combos, { onBegin, onEnd, onLock = () => {}, now = Date.now }) 
     },
     /** capture the next chord the user presses, for the settings screen */
     record(cb) { if (active) end(true); held.clear(); widest = []; recording = cb; },
+    /** the pill's ✓ and ✕: finish or discard the recording without the keys */
+    finish(cancel) { if (active) end(cancel); },
     set(next) { combos = next; },
   };
 }

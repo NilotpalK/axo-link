@@ -32,6 +32,16 @@ test('a tap goes hands-free, and the next press ends it', () => {
   assert.deepEqual(log, ['begin dictate', 'lock dictate', 'end dictate']);
 });
 
+test("the pill's ✓ finishes a hands-free recording and ✕ discards one; with nothing recording they do nothing", () => {
+  const { hk, log, wait } = rig();
+  hk.down('Ctrl'); hk.down('Meta'); wait(TAP_MS - 50); hk.up('Meta'); hk.up('Ctrl');
+  hk.finish(false);
+  hk.down('Ctrl'); hk.down('Meta'); wait(TAP_MS - 50); hk.up('Meta'); hk.up('Ctrl');
+  hk.finish(true);
+  hk.finish(false);
+  assert.deepEqual(log, ['begin dictate', 'lock dictate', 'end dictate', 'begin dictate', 'lock dictate', 'cancel dictate']);
+});
+
 test('adding Alt switches dictation to talking to axo; another shortcut cancels', () => {
   const { hk, log, wait } = rig();
   hk.down('Ctrl'); hk.down('Meta'); hk.down('Alt'); wait(800); hk.up('Alt'); hk.up('Meta'); hk.up('Ctrl');

@@ -2,161 +2,246 @@
 <title>axo-link</title>
 <style>
   :root {
-    --state-running: #4ade80;
-    --state-waiting: #fbbf24;
-    --state-error:   #f87171;
-    --state-idle:    #64748b;
-    --state-done:    #60a5fa;
-    --surface-pill:  rgba(18, 18, 22, 0.88);
-    --border-pill:   rgba(255, 255, 255, 0.12);
-    --text:          #e7e7ea;
-    --text-dim:      #8b8b96;
-    --motion-quick:  150ms ease-out;
-    --motion-grow:   220ms cubic-bezier(.2, .8, .2, 1);
+    /* black, white and greys; amber only for "needs you", red only for errors */
+    --bg:        #000;
+    --bg-2:      #111113;
+    --bg-3:      #1c1c1f;
+    --line:      rgba(255, 255, 255, .09);
+    --line-2:    rgba(255, 255, 255, .16);
+    --text:      #f4f4f5;
+    --dim:       #a1a1a8;
+    --faint:     #6c6c73;
+    --amber:     #fbbf24;
+    --red:       #ff6b6b;
+    --cream:     #efece6;
+    --font:      "Segoe UI Variable Text", "Segoe UI", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+    --mono:      "Cascadia Mono", ui-monospace, Consolas, monospace;
+    /* shape changes ride a spring; the script swaps in the real curve at load */
+    --spring:    cubic-bezier(.2, .8, .2, 1);
+    --morph:     420ms;
+    --fade:      170ms ease;
+    --quick:     120ms cubic-bezier(.2, .9, .3, 1);
   }
   * { box-sizing: border-box; margin: 0; }
   html, body { height: 100%; }
   body {
-    font: 12px/1.45 system-ui, "Segoe UI", sans-serif;
-    color: var(--text); background: transparent;
-    overflow: hidden; user-select: none;
+    font: 14px/1.4 var(--font); color: var(--text); background: transparent;
+    overflow: hidden; user-select: none; -webkit-font-smoothing: antialiased;
   }
+  button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
+  svg { display: block; flex: none; }
   /* everything sits at the bottom centre; the rest of the window is click-through */
   #stage {
-    height: 100%; display: flex; flex-direction: column;
-    justify-content: flex-end; align-items: center; gap: 8px; padding-bottom: 6px;
+    position: relative; height: 100%; display: flex; flex-direction: column;
+    justify-content: flex-end; align-items: center; gap: 10px; padding-bottom: 10px;
   }
+  /* Shadows and glows stay inside the window's margins (10 px beside the panel,
+     16 px under the bar): past the edge of this transparent window they are cut
+     off in a hard line, which shows as a grey box over whatever is behind. */
 
-  /* ---- the bar ---- */
+  /* ---- the bar: one shape that morphs on a spring from the bottom centre ---- */
   #hit { padding: 6px 12px; cursor: pointer; }   /* a bigger target than the bar itself */
   #bar {
-    height: 8px; width: 44px; border-radius: 999px;
-    display: flex; align-items: center; justify-content: center; gap: 8px;
-    background: var(--surface-pill); border: 1px solid var(--border-pill);
-    backdrop-filter: blur(18px); overflow: hidden; white-space: nowrap;
-    transition: width var(--motion-grow), height var(--motion-grow), background var(--motion-quick);
+    position: relative; height: 10px; width: 48px; border-radius: 999px;
+    background-color: var(--bg); border: 1px solid var(--line-2); overflow: hidden;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, .35);
+    transition: width var(--morph) var(--spring), height var(--morph) var(--spring),
+      background-color 240ms ease, border-color 240ms ease, box-shadow 240ms ease;
   }
-  body.waiting #bar { background: rgba(251, 191, 36, .85); border-color: transparent; animation: pulse 1.4s ease-in-out infinite; }
-  #hit:hover #bar, body.open #bar { height: 30px; width: 170px; background: var(--surface-pill); border-color: var(--border-pill); animation: none; }
-  body.v-listening #bar, body.v-locked #bar { height: 34px; width: 190px; background: var(--surface-pill); animation: none; }
-  body.v-thinking #bar { height: 34px; width: 74px; background: var(--surface-pill); animation: none; }
-  body.v-speaking #bar, body.v-error #bar {
-    height: 34px; width: auto; min-width: 190px; max-width: 400px; padding: 0 16px;
-    background: var(--surface-pill); animation: none;
+  /* --fit is the width of what the bar says, measured by the script */
+  body.v-idle #hit:hover #bar, body.v-idle.open #bar { height: 34px; width: clamp(176px, var(--fit, 176px), 400px); }
+  body.v-listening #bar, body.v-locked #bar { height: 40px; width: 196px; }
+  body.v-thinking #bar { height: 40px; width: 84px; }
+  body.v-speaking #bar { height: 40px; width: clamp(196px, var(--fit, 196px), 400px); }
+  /* waiting: amber, with a soft glow that breathes */
+  body.waiting.v-idle:not(.open) #hit:not(:hover) #bar {
+    background-color: var(--amber); border-color: transparent; animation: glow 2.2s ease-in-out infinite;
   }
-  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .55; } }
+  @keyframes glow {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(251, 191, 36, 0), 0 2px 6px rgba(0, 0, 0, .35); }
+    50% { box-shadow: 0 0 10px 1px rgba(251, 191, 36, .55), 0 2px 6px rgba(0, 0, 0, .35); }
+  }
 
-  #wave, #dots, #text { display: none; }
-  #wave { align-items: center; gap: 3px; height: 22px; }
-  #wave i { width: 3px; height: 4px; border-radius: 2px; background: var(--state-running); transition: height 90ms linear; }
-  body.v-listening #wave, body.v-locked #wave { display: flex; }
-  #dots { gap: 5px; }
-  #dots i { width: 6px; height: 6px; border-radius: 50%; background: var(--text-dim); animation: blink 1s infinite; }
-  #dots i:nth-child(2) { animation-delay: .15s; } #dots i:nth-child(3) { animation-delay: .3s; }
-  body.v-thinking #dots { display: flex; }
-  @keyframes blink { 0%, 100% { opacity: .3; } 50% { opacity: 1; } }
-  #text { font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; color: var(--text-dim); }
-  #hit:hover #text, body.open #text, body.v-listening #text, body.v-locked #text,
-  body.v-speaking #text, body.v-error #text { display: block; }
-  body.v-speaking #text { color: var(--text); }
-  body.v-error #text { color: var(--state-error); }
-  body.v-thinking #text { display: none; }
+  /* what the bar shows sits in layers that crossfade, so nothing pops in or out */
+  .layer {
+    position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; gap: 10px;
+    white-space: nowrap; pointer-events: none;
+    opacity: 0; transform: scale(.9); filter: blur(2px);
+    transition: opacity var(--fade), filter var(--fade), transform var(--morph) var(--spring);
+  }
+  body.v-listening #lay-listen, body.v-locked #lay-listen, body.v-thinking #lay-think,
+  body.v-idle #hit:hover #lay-text, body.v-idle.open #lay-text, body.v-speaking #lay-text {
+    opacity: 1; transform: none; filter: none; transition-delay: 60ms;
+  }
+  body.v-listening #lay-listen, body.v-locked #lay-listen { pointer-events: auto; }
+  #lay-listen { justify-content: space-between; padding: 0 6px; }
+  /* a caption longer than the bar shows its newest words, the oldest fading off the left */
+  #lay-text.clip { justify-content: flex-end; padding: 0 18px; -webkit-mask-image: linear-gradient(90deg, transparent, #000 28px); }
+  .say { font-size: 13px; color: var(--dim); flex: none; }
+  body.v-speaking #text { color: var(--text); font-size: 13.5px; }
 
-  /* ---- the panel, opening upward ---- */
+  /* ✕ and ✓ while listening: discard, or finish */
+  .vbtn {
+    width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center;
+    transition: transform var(--quick), background-color var(--quick);
+  }
+  .vbtn:hover { transform: scale(1.08); }
+  .vbtn:active { transform: scale(.94); }
+  #v-cancel { background: var(--bg-3); color: var(--text); }
+  #v-cancel:hover { background: #2a2a2e; }
+  #v-done { background: var(--text); color: #000; }
+  .mid { display: flex; align-items: center; gap: 8px; }
+  #wave { display: flex; align-items: center; gap: 3px; height: 20px; }
+  /* bars are full height and scaled by the script every frame: the GPU moves them, nothing reflows */
+  #wave i { width: 2.5px; height: 20px; border-radius: 2px; background: var(--text); transform: scaleY(.15); will-change: transform; }
+  #mode-tag { font-size: 12px; color: var(--faint); }
+  #dots { display: flex; gap: 5px; }
+  #dots i { width: 6px; height: 6px; border-radius: 50%; background: var(--text); animation: hop 1s ease-in-out infinite; }
+  #dots i:nth-child(2) { animation-delay: .14s; } #dots i:nth-child(3) { animation-delay: .28s; }
+  @keyframes hop { 0%, 100% { opacity: .3; transform: translateY(1px); } 50% { opacity: 1; transform: translateY(-2px); } }
+
+  /* the shortcut hint, after a moment of hovering an idle bar */
+  #hint {
+    position: absolute; bottom: 56px; left: 50%; transform: translate(-50%, 4px); opacity: 0;
+    padding: 6px 10px; border-radius: 10px; background: var(--bg); border: 1px solid var(--line);
+    font-size: 12px; color: var(--dim); white-space: nowrap; pointer-events: none;
+    transition: opacity var(--fade), transform var(--morph) var(--spring);
+  }
+  #hint b { color: var(--text); font-weight: 500; }
+  body.v-idle:not(.open) #hit:hover ~ #hint { opacity: 1; transform: translate(-50%, 0); transition-delay: 450ms; }
+
+  /* ---- notification cards, above the bar ---- */
+  #cards {
+    position: absolute; bottom: 58px; left: 50%; transform: translateX(-50%);
+    display: flex; flex-direction: column; align-items: center; gap: 8px;
+    transition: opacity var(--fade);
+  }
+  body.open #cards { opacity: 0; pointer-events: none; }
+  .card {
+    width: 384px; padding: 16px 14px 14px 18px; border-radius: 22px;
+    background: var(--bg); border: 1px solid var(--line-2); box-shadow: 0 4px 12px rgba(0, 0, 0, .45);
+    transform-origin: 50% 100%; animation: card-in var(--morph) var(--spring) both;
+  }
+  .card.out { animation: card-out 200ms ease-in both; }
+  @keyframes card-in { from { opacity: 0; transform: translateY(14px) scale(.95); } }
+  @keyframes card-out { to { opacity: 0; transform: translateY(8px) scale(.97); } }
+  .c-head { display: flex; align-items: center; gap: 10px; }
+  .c-head b { flex: 1; font-size: 15px; font-weight: 600; }
+  .c-icon { color: var(--text); }
+  .card.bad .c-icon { color: var(--red); }
+  .card.ask .c-icon { color: var(--amber); }
+  .c-body { margin: 6px 4px 0 28px; font-size: 13.5px; color: var(--dim); line-height: 1.45; }
+  .c-cmd {
+    margin: 10px 0 0 28px; padding: 8px 10px; border-radius: 10px; background: var(--bg-2); border: 1px solid var(--line);
+    font: 12.5px/1.5 var(--mono); color: #fde68a; word-break: break-all; user-select: text;
+  }
+  .c-acts { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
+  /* the close button: its ring empties as the card's time runs out (paused while you hover) */
+  .c-close { position: relative; width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; color: var(--dim); }
+  .c-close:hover { color: var(--text); }
+  .c-close .ring { position: absolute; inset: 0; transform: rotate(-90deg); }
+  .ring circle { fill: none; stroke-width: 1.5; }
+  .ring .track { stroke: var(--line-2); }
+  .ring .left { stroke: var(--text); stroke-dasharray: 88; stroke-dashoffset: 0; animation: drain linear forwards; }
+  .card:hover .ring .left { animation-play-state: paused; }
+  @keyframes drain { to { stroke-dashoffset: 88; } }
+
+  /* buttons */
+  .btn {
+    font-size: 13px; font-weight: 600; padding: 7px 16px; border-radius: 999px;
+    transition: transform var(--quick), background-color var(--quick), border-color var(--quick), color var(--quick);
+  }
+  .btn:active { transform: scale(.96); }
+  .btn.primary { background: var(--cream); color: #000; }
+  .btn.primary:hover { background: #fff; }
+  .btn.ghost { border: 1px solid var(--line-2); color: var(--text); }
+  .btn.ghost:hover { border-color: var(--dim); }
+  .icon-btn {
+    width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center;
+    border: 1px solid var(--line-2); color: var(--dim);
+    transition: color var(--quick), border-color var(--quick), transform var(--quick);
+  }
+  .icon-btn:hover { color: var(--text); border-color: var(--dim); }
+  .icon-btn:active { transform: scale(.94); }
+
+  /* ---- the panel, springing up out of the bar ---- */
   #panel {
-    width: 400px; max-height: 396px; display: flex; flex-direction: column;   /* 460px window minus the bar */
-    background: var(--surface-pill); border: 1px solid var(--border-pill);
-    border-radius: 16px; backdrop-filter: blur(18px); overflow: hidden;
+    width: 400px; max-height: 384px; display: flex; flex-direction: column;
+    background: var(--bg); border: 1px solid var(--line-2); border-radius: 22px; overflow: hidden;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, .4);
+    transform-origin: 50% 100%;
+    transition: opacity var(--fade), transform var(--morph) var(--spring), visibility 0s;
   }
-  body:not(.open) #panel { display: none; }
-  #tabs { flex: none; display: flex; align-items: center; gap: 4px; padding: 8px 10px 6px; }
-  .tab {
-    border: 0; background: transparent; color: var(--text-dim);
-    font: inherit; font-size: 11px; padding: 4px 9px; border-radius: 7px;
-    cursor: pointer; transition: color var(--motion-quick), background var(--motion-quick);
+  body:not(.open) #panel {
+    opacity: 0; transform: translateY(10px) scale(.96); visibility: hidden; pointer-events: none;
+    transition: opacity 140ms ease, transform 260ms ease-in, visibility 0s linear 260ms;
   }
+  /* on opening, the rows arrive one after another */
+  body.entering #roster { overflow: hidden; }   /* no scrollbar flash while they slide in */
+  body.entering .row { animation: row-in 380ms var(--spring) both; animation-delay: calc(40ms + var(--i, 0) * 28ms); }
+  @keyframes row-in { from { opacity: 0; transform: translateY(6px); } }
+
+  #tabs { flex: none; display: flex; align-items: center; gap: 8px; padding: 12px 12px 8px; }
+  .segs { display: flex; padding: 3px; border-radius: 11px; background: var(--bg-3); }
+  .tab { font-size: 13px; padding: 5px 12px; border-radius: 8px; color: var(--dim); transition: color var(--quick), background-color var(--quick); }
   .tab:hover { color: var(--text); }
-  .tab.on { background: rgba(255, 255, 255, .08); color: var(--text); }
-  .tab .n { opacity: .7; }
-  .tab.alert .n { color: var(--state-waiting); opacity: 1; }
-  #add {
-    margin-left: auto; width: 22px; height: 22px; border-radius: 50%;
-    border: 1px solid var(--border-pill); background: transparent;
-    color: var(--text-dim); font-size: 14px; line-height: 1; cursor: pointer;
-  }
-  #add:hover { color: var(--text); border-color: var(--text-dim); }
+  .tab.on { background: #2c2c30; color: var(--text); }
+  .tab .n { color: var(--faint); margin-left: 2px; }
+  .tab.alert .n { color: var(--amber); }
+  #add { margin-left: auto; }
 
-  #roster { flex: 1; overflow-y: auto; padding: 0 6px 4px; }
-  .row { padding: 8px 10px; border-radius: 10px; cursor: pointer; transition: background var(--motion-quick); }
-  .row:hover { background: rgba(255, 255, 255, .04); }
-  .row.sel   { background: rgba(255, 255, 255, .07); }
+  #roster { flex: 1; overflow-y: auto; padding: 0 8px 6px; }
+  .row { padding: 12px 12px; border-radius: 14px; cursor: pointer; transition: background-color var(--quick); }
+  .row:hover { background: var(--bg-2); }
+  .row.sel { background: var(--bg-3); }
   .head { display: flex; align-items: center; gap: 8px; }
-  .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--state-idle); }
-  .dot.running { background: var(--state-running); }
-  .dot.waiting { background: var(--state-waiting); }
-  .dot.done    { background: var(--state-done); }
-  .dot.error   { background: var(--state-error); }
-  .head .label { font-weight: 600; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .head .dev { font-weight: 400; color: var(--text-dim); font-size: 10.5px; margin-left: 4px; }
-  .kind { color: var(--text-dim); font-size: 10px; text-transform: uppercase; letter-spacing: .06em; white-space: nowrap; }
-  .kind.approval { color: var(--state-waiting); }
-  .x {
-    border: 0; background: transparent; color: var(--text-dim); cursor: pointer;
-    font-size: 14px; line-height: 1; padding: 0 2px; opacity: 0; transition: opacity var(--motion-quick);
+  .name { font-size: 15px; font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .dev { font-size: 12px; color: var(--faint); white-space: nowrap; flex: 1; }
+  .chip {
+    display: inline-flex; align-items: center; gap: 6px; padding: 2px 9px; border-radius: 999px;
+    background: var(--bg-3); font-size: 11.5px; color: var(--dim); white-space: nowrap;
   }
+  .chip.wait { background: rgba(251, 191, 36, .13); color: var(--amber); }
+  .dot { width: 6px; height: 6px; border-radius: 50%; flex: none; background: var(--faint); }
+  .dot.running { background: var(--text); }
+  .dot.waiting { background: var(--amber); }
+  .dot.done { background: var(--dim); }
+  .dot.error { background: var(--red); }
+  .x { width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center; color: var(--faint); opacity: 0; transition: opacity var(--quick), color var(--quick); }
   .row:hover .x, .x:focus-visible { opacity: 1; }
-  .x:hover { color: var(--state-error); }
-  .body { padding-left: 16px; }
-  .summary {
-    font-size: 11px; margin-top: 3px;
-    display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
-  }
-  .did { color: var(--text-dim); font-size: 10.5px; margin-top: 3px; }
-  .pending {
-    margin-top: 5px; padding: 5px 8px; border-radius: 7px;
-    background: rgba(251, 191, 36, .10); border: 1px solid rgba(251, 191, 36, .22);
-    color: #f5d78e; font-family: ui-monospace, Consolas, monospace; font-size: 10.5px; word-break: break-all;
-  }
-  .acts { display: flex; gap: 6px; margin-top: 6px; }
-  button.act, .set button, .seg button {
-    font: inherit; font-size: 11px; padding: 4px 12px; border-radius: 7px; cursor: pointer;
-    border: 1px solid var(--border-pill); background: transparent; color: var(--text-dim);
-    transition: color var(--motion-quick), border-color var(--motion-quick);
-  }
-  .act.ok:hover { color: var(--state-running); border-color: var(--state-running); }
-  .act.no:hover { color: var(--state-error); border-color: var(--state-error); }
-  #empty { color: var(--text-dim); text-align: center; padding: 26px 16px; line-height: 1.7; }
+  .x:hover { color: var(--red); }
+  .summary { margin-top: 4px; font-size: 13px; color: var(--dim); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .did { margin-top: 3px; font-size: 12px; color: var(--faint); }
+  .ask { margin-top: 10px; padding: 10px 12px; border-radius: 12px; background: rgba(251, 191, 36, .07); border: 1px solid rgba(251, 191, 36, .22); }
+  .cmd { font: 12.5px/1.5 var(--mono); color: #fde68a; word-break: break-all; }
+  .ask .note { margin-top: 6px; font-size: 12px; color: var(--dim); }
+  .acts { display: flex; gap: 8px; margin-top: 10px; }
+  #empty { color: var(--dim); text-align: center; padding: 30px 16px; line-height: 1.7; font-size: 13.5px; }
 
-  #settings { flex: 1; min-height: 0; overflow-y: auto; padding: 4px 16px 14px; }
-  .note { color: var(--text-dim); font-size: 10.5px; line-height: 1.5; margin: -4px 0 4px; }
-  .srow { display: flex; align-items: center; gap: 10px; padding: 7px 0; }
+  #settings { flex: 1; min-height: 0; overflow-y: auto; padding: 4px 18px 16px; }
+  .srow { display: flex; align-items: center; gap: 10px; padding: 9px 0; font-size: 14px; }
   .srow > span, .srow > label { flex: 1; }
   .srow select {
-    max-width: 220px; font: inherit; font-size: 11px; padding: 4px 6px; border-radius: 7px;
-    border: 1px solid var(--border-pill); background: rgba(0, 0, 0, .30); color: var(--text); outline: none;
+    max-width: 200px; font: inherit; font-size: 13px; padding: 6px 8px; border-radius: 9px;
+    border: 1px solid var(--line-2); background: var(--bg-3); color: var(--text); outline: none;
   }
-  .srow select:focus { border-color: var(--text-dim); }
-  .srow select option { background: #1b1b20; }
-  #meter { height: 4px; border-radius: 2px; background: rgba(255, 255, 255, .08); margin: 0 0 4px; overflow: hidden; }
-  #meter i { display: block; height: 100%; width: 0; background: var(--state-running); transition: width 90ms linear; }
-  kbd { font: 11px ui-monospace, Consolas, monospace; color: var(--text); padding: 3px 7px; border-radius: 6px; background: rgba(255, 255, 255, .08); }
-  .set button:hover, .seg button:hover { color: var(--text); border-color: var(--text-dim); }
-  .seg { display: flex; }
-  .seg button { border-radius: 0; }
-  .seg button:first-child { border-radius: 7px 0 0 7px; }
-  .seg button:last-child { border-radius: 0 7px 7px 0; border-left: 0; }
-  .seg button.on { color: var(--text); background: rgba(255, 255, 255, .08); }
-  .err { color: var(--state-error); font-size: 13px; min-height: 0; }
-  .hint { color: var(--text-dim); font-size: 11px; margin-top: 6px; line-height: 1.6; }
+  .srow select:focus { border-color: var(--dim); }
+  .srow select option { background: var(--bg-3); }
+  #meter { height: 4px; border-radius: 2px; background: var(--bg-3); margin: 0 0 6px; overflow: hidden; }
+  #meter i { display: block; height: 100%; width: 100%; background: var(--text); transform: scaleX(0); transform-origin: left; }
+  kbd { font: 12px var(--mono); color: var(--text); padding: 4px 8px; border-radius: 7px; background: var(--bg-3); }
+  .note { color: var(--faint); font-size: 12px; line-height: 1.5; margin: -2px 0 6px; }
+  .hint { color: var(--faint); font-size: 12px; margin-top: 8px; line-height: 1.6; }
+  .err { color: var(--red); font-size: 13px; }
 
-  #compose { flex: none; padding: 8px; border-top: 1px solid var(--border-pill); }
+  #compose { flex: none; padding: 10px; border-top: 1px solid var(--line); }
   #compose input {
-    width: 100%; padding: 9px 12px; border-radius: 10px;
-    border: 1px solid var(--border-pill); background: rgba(0, 0, 0, .30);
-    color: var(--text); font: inherit; outline: none;
+    width: 100%; padding: 10px 14px; border-radius: 14px; border: 1px solid var(--line);
+    background: var(--bg-2); color: var(--text); font: inherit; font-size: 14px; outline: none;
+    transition: border-color var(--quick);
   }
-  #compose input:focus { border-color: var(--text-dim); }
-  #compose input:disabled { opacity: .45; }
+  #compose input:focus { border-color: var(--line-2); }
+  #compose input:disabled { opacity: .5; }
   body.tab-settings #roster, body.tab-settings #compose { display: none; }
   body:not(.tab-settings) #settings { display: none; }
 
@@ -169,20 +254,20 @@
   <div id="panel">
     <div id="tabs"></div>
     <div id="roster"></div>
-    <div id="settings" class="set">
-      <div class="srow"><span>Dictate</span><kbd id="k-dictate"></kbd><button data-rec="dictate">Change</button></div>
-      <div class="srow"><span>Talk to axo</span><kbd id="k-talk"></kbd><button data-rec="talk">Change</button></div>
+    <div id="settings">
+      <div class="srow"><span>Dictate</span><kbd id="k-dictate"></kbd><button class="btn ghost" data-rec="dictate">Change</button></div>
+      <div class="srow"><span>Talk to axo</span><kbd id="k-talk"></kbd><button class="btn ghost" data-rec="talk">Change</button></div>
       <div class="srow"><label for="mic">Microphone</label><select id="mic"></select></div>
       <div id="meter" role="meter" aria-label="Microphone level" title="Speak: this bar should move"><i></i></div>
       <p id="mic-using" class="hint"></p>
       <div class="srow"><label for="speaker">Speaker</label><select id="speaker"></select></div>
       <div class="srow"><span>Clean up dictation</span>
-        <div class="seg"><button data-clean="on">On</button><button data-clean="off">Off</button></div>
+        <div class="segs"><button class="tab" data-clean="on">On</button><button class="tab" data-clean="off">Off</button></div>
       </div>
       <p class="note">Removes "um"s and fixes punctuation. Adds about a second after you let go;
         Off types your exact words straight away.</p>
       <div class="srow"><span>When an agent finishes</span>
-        <div class="seg"><button data-mode="desk">Chime</button><button data-mode="away">Speak</button></div>
+        <div class="segs"><button class="tab" data-mode="desk">Chime</button><button class="tab" data-mode="away">Speak</button></div>
       </div>
       <div id="set-err" class="err" role="alert"></div>
       <p class="hint">Hold a hotkey to talk; tap it for hands-free. "Speak" is for when you're away;
@@ -191,54 +276,199 @@
     <div id="compose"><input id="msg" placeholder="Select a session…" disabled></div>
   </div>
   <div id="hit"><div id="bar" role="status" aria-live="polite">
-    <div id="wave"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
-    <div id="dots"><i></i><i></i><i></i></div>
-    <span id="text"></span>
+    <div class="layer" id="lay-listen">
+      <button class="vbtn" id="v-cancel" title="Discard" aria-label="Discard"></button>
+      <div class="mid">
+        <div id="wave"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+        <span id="mode-tag"></span>
+      </div>
+      <button class="vbtn" id="v-done" title="Finish" aria-label="Finish"></button>
+    </div>
+    <div class="layer" id="lay-think"><div id="dots"><i></i><i></i><i></i></div></div>
+    <div class="layer" id="lay-text"><span class="say" id="text"></span></div>
   </div></div>
+  <div id="hint"></div>
+  <div id="cards" role="status" aria-live="polite"></div>
 </div>
 
 <script>
   const $ = (s) => document.querySelector(s);
   const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
+  /* ---------- icons: drawn on a 24 grid, stroked in the text colour ---------- */
+  const svg = (d, s = 16) => '<svg width="' + s + '" height="' + s + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
+    'stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + d + '</svg>';
+  const ICON = {
+    x: (s) => svg('<path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/>', s),
+    check: (s) => svg('<path d="M5 12.5l4.5 4.5L19 7.5"/>', s),
+    plus: (s) => svg('<path d="M12 5.5v13M5.5 12h13"/>', s),
+    alert: (s) => svg('<circle cx="12" cy="12" r="9"/><path d="M12 7.5v5.5M12 16.5v.01"/>', s),
+    mic: (s) => svg('<rect x="9" y="3" width="6" height="11.5" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/>', s),
+    hand: (s) => svg('<path d="M12 3l7 3v6c0 4.4-2.9 7.6-7 9-4.1-1.4-7-4.6-7-9V6z"/><path d="M12 8.5v4M12 15.5v.01"/>', s),
+    done: (s) => svg('<circle cx="12" cy="12" r="9"/><path d="M8.2 12.4l2.6 2.6 5-5.2"/>', s),
+    unlink: (s) => svg('<path d="M9.5 14.5l5-5M8 11l-2 2a3.5 3.5 0 0 0 5 5l2-2M16 13l2-2a3.5 3.5 0 0 0-5-5l-2 2M3.5 3.5l17 17"/>', s),
+    key: (s) => svg('<circle cx="8" cy="15" r="4"/><path d="M11 12l8.5-8.5M16.5 6.5l2.5 2.5"/>', s),
+  };
+  $('#v-cancel').innerHTML = ICON.x(14);
+  $('#v-done').innerHTML = ICON.check(15);
+
   let list = [], sel = null, tab = 'all', hubUp = true, settings = {};
   // "waiting" means it needs a decision from you; a finished turn is just done
   const needsYou = (s) => s.state === 'waiting' && s.waiting_kind !== 'finished';
   const look = (s) => (s.state === 'waiting' && !needsYou(s) ? 'done' : s.state);
-  let voice = 'idle', voiceMode = 'dictate', errMsg = '', errT, caption = '', speaking = false, previewing = false;
+  let voice = 'idle', voiceMode = 'dictate', caption = '', speaking = false, previewing = false;
+
+  /* ---------- motion ---------- */
+  // A damped spring from rest to 1, sampled into a CSS linear() easing: shape
+  // changes start fast, overshoot by about 3% and settle within --morph.
+  // zeta is the damping (1 = no overshoot); the envelope is down to 0.1% at the end.
+  function springEasing(zeta = 0.75, steps = 40) {
+    const w = Math.log(1000) / zeta, wd = w * Math.sqrt(1 - zeta * zeta);
+    const x = (t) => 1 - Math.exp(-zeta * w * t) * (Math.cos(wd * t) + (zeta * w / wd) * Math.sin(wd * t));
+    const pts = Array.from({ length: steps + 1 }, (_, i) => (i === steps ? 1 : +x(i / steps).toFixed(4)));
+    return 'linear(' + pts.join(', ') + ')';
+  }
+  document.documentElement.style.setProperty('--spring', springEasing());
 
   /* ---------- the bar ---------- */
+  const has = (c) => document.body.classList.contains(c);
+  const textShown = () => has('v-speaking') || (has('v-idle') && (has('open') || over));   // over: the cursor is on the bar
+  // the bar is as wide as what it says, so a caption grows it word by word
+  function say(s) {
+    const el = $('#text');
+    if (el.textContent === s) return;
+    el.textContent = s;
+    const fit = el.scrollWidth + 36;
+    $('#bar').style.setProperty('--fit', fit + 'px');
+    $('#lay-text').classList.toggle('clip', fit > 400);
+  }
   function paint() {
     const waiting = list.filter(needsYou).length;
     const b = document.body.classList;
+    const state = speaking && voice === 'idle' ? 'speaking' : voice;
     for (const c of [...b]) if (c.startsWith('v-')) b.remove(c);
-    b.add('v-' + (speaking && voice === 'idle' ? 'speaking' : voice));
+    b.add('v-' + state);
     b.toggle('waiting', waiting > 0);
-    $('#text').textContent =
-      voice === 'error' ? errMsg
-      : voice === 'listening' ? (voiceMode === 'dictate' ? 'Dictating' : 'axo is listening')
-      : voice === 'locked' ? (voiceMode === 'dictate' ? 'Dictating' : 'axo') + ' · hands-free'
-      : speaking ? caption.slice(-64)   // the newest words
+    if (state === 'listening' || state === 'locked') {
+      // dictation is the wave alone; talking to axo says so
+      $('#mode-tag').textContent = voiceMode === 'talk' ? 'axo' : '';
+      wave.wake();
+    }
+    // a layer that is fading out keeps its words; only the one on screen changes
+    if (textShown()) say(
+      state === 'speaking' ? caption.slice(-64)   // the newest words
       : !hubUp ? 'no hub'
       : (list.length ? list.length + (list.length === 1 ? ' agent' : ' agents') : 'no agents') +
-        (waiting ? ' · ' + waiting + ' waiting' : '') + (settings.mode === 'away' ? ' · away' : '');
+        (waiting ? ' · ' + waiting + ' waiting' : '') + (settings.mode === 'away' ? ' · away' : ''));
   }
 
-  $('#hit').onclick = () => { document.body.classList.toggle('open'); render(); };
+  // opening the panel lets its rows arrive one by one
+  let enterT;
+  function openPanel(on = true) {
+    const b = document.body.classList;
+    b.toggle('open', on);
+    if (on) { b.add('entering'); clearTimeout(enterT); enterT = setTimeout(() => b.remove('entering'), 700); }
+    render();
+  }
+  $('#hit').onclick = (e) => { if (!e.target.closest('.vbtn')) openPanel(!has('open')); };
+  $('#v-cancel').onclick = () => axo.endVoice(true);
+  $('#v-done').onclick = () => axo.endVoice(false);
 
-  // clicks pass through the window except over the bar and the open panel
+  // clicks pass through the window except over the bar, a card and the open panel
   let over = false, closeT;
   document.addEventListener('mousemove', (e) => {
-    const now = !!e.target.closest('#hit, body.open #panel');
+    const now = !!e.target.closest('#hit, .card, body.open #panel');
     if (now === over) return;
     over = now;
     axo.hit(now);
+    paint();   // hovering shows the summary: its words go in before it fades up
     clearTimeout(closeT);
     // drifting away closes the panel, unless you're typing or picking in it
     if (!now) closeT = setTimeout(() => {
-      if (!document.activeElement?.closest('#panel')) { document.body.classList.remove('open'); render(); }
+      if (has('open') && !document.activeElement?.closest('#panel')) openPanel(false);
     }, 900);
   });
+
+  /* ---------- notification cards ---------- */
+  // A card says what happened and offers one way to act on it. Timed cards
+  // leave when their ring runs out (it pauses while you hover); a card for
+  // something still true, like an approval or a dropped hub, stays until it isn't.
+  const cards = new Map();
+  function card(key, { icon, tone = '', title, body = '', cmd = '', actions = [], life = 8000 }) {
+    drop(key, true);
+    const el = document.createElement('div');
+    el.className = 'card ' + tone;
+    el.innerHTML =
+      '<div class="c-head"><span class="c-icon">' + icon(18) + '</span><b>' + esc(title) + '</b>' +
+        '<button class="c-close" aria-label="Dismiss">' +
+          (life ? '<svg class="ring" viewBox="0 0 32 32"><circle class="track" cx="16" cy="16" r="14"/>' +
+            '<circle class="left" cx="16" cy="16" r="14" style="animation-duration:' + life + 'ms"/></svg>' : '') +
+          ICON.x(14) + '</button></div>' +
+      (body ? '<div class="c-body">' + esc(body) + '</div>' : '') +
+      (cmd ? '<div class="c-cmd">' + esc(cmd) + '</div>' : '') +
+      (actions.length ? '<div class="c-acts"></div>' : '');
+    for (const a of actions) {
+      const btn = document.createElement('button');
+      btn.className = 'btn ' + (a.ghost ? 'ghost' : 'primary');
+      btn.textContent = a.label;
+      btn.onclick = () => { a.run(); if (!a.keep) drop(key); };
+      el.querySelector('.c-acts').append(btn);
+    }
+    el.querySelector('.c-close').onclick = () => drop(key);
+    el.querySelector('.ring .left')?.addEventListener('animationend', () => drop(key));
+    $('#cards').append(el);
+    cards.set(key, el);
+    // two at most: the oldest makes way
+    if (cards.size > 2) drop(cards.keys().next().value);
+  }
+  function drop(key, now = false) {
+    const el = cards.get(key);
+    if (!el) return;
+    cards.delete(key);
+    if (now) return el.remove();
+    el.classList.add('out');
+    el.addEventListener('animationend', () => el.remove(), { once: true });
+  }
+  const openSettings = () => { tab = 'settings'; openPanel(true); devices(); };
+  const openSession = (id) => { sel = id; tab = 'all'; openPanel(true); };
+
+  function errorCard(v) {
+    const msg = v.msg || 'Something went wrong.';
+    if (v.kind === 'silence') return card('error', {
+      icon: ICON.mic, tone: 'bad', title: 'No audio received',
+      body: msg.startsWith('Silence') ? 'Pure silence from ' + (v.mic || 'the microphone') +
+        '. A virtual mic sends nothing when its source isn\'t running.' : 'We didn\'t hear anything. The mic may be muted or too far away.',
+      actions: [{ label: 'Choose mic', run: openSettings }],
+    });
+    if (/GEMINI_API_KEY/.test(msg)) return card('error', { icon: ICON.key, tone: 'bad', title: 'Voice isn\'t set up', body: msg, life: 12000 });
+    if (/allowance|quota|429/i.test(msg)) return card('error', { icon: ICON.alert, tone: 'bad', title: 'Gemini limit reached', body: msg, life: 12000 });
+    if (/^microphone/i.test(msg)) return card('error', { icon: ICON.mic, tone: 'bad', title: 'Microphone unavailable', body: msg, actions: [{ label: 'Choose mic', run: openSettings }] });
+    card('error', { icon: ICON.alert, tone: 'bad', title: 'Something went wrong', body: msg });
+  }
+
+  // an approval card for each new request, gone once it's answered
+  const askKey = (s) => 'ask:' + s.id + ':' + (s.pending_ids || []).join(',');
+  function approvals() {
+    const live = new Set();
+    for (const s of list) {
+      if (s.state !== 'waiting' || s.waiting_kind !== 'approval_request') continue;
+      const key = askKey(s);
+      live.add(key);
+      if (cards.has(key)) continue;
+      const terminal = s.kind === 'terminal';
+      card(key, {
+        icon: ICON.hand, tone: 'ask', title: s.label + ' needs approval', life: 0,
+        body: terminal ? 'Answer it in its terminal.' : '',
+        cmd: (s.pending || []).join('\n'),
+        actions: terminal ? [{ label: 'Open', ghost: true, run: () => openSession(s.id) }] : [
+          { label: 'Deny', ghost: true, run: () => axo.deny(s.id) },
+          // Approve names the requests shown on the card, so it can't approve one you never saw
+          { label: 'Approve', run: () => axo.approve(s.id, s.pending_ids || []) },
+        ],
+      });
+    }
+    for (const key of [...cards.keys()]) if (key.startsWith('ask:') && !live.has(key)) drop(key);
+  }
 
   /* ---------- mic: 16 kHz 16-bit PCM in 100 ms chunks ---------- */
   // The mic runs at its own rate (usually 48 kHz) and this brings it down to
@@ -250,6 +480,7 @@
       super();
       this.step = sampleRate / 16000; this.t = 0; this.sum = 0; this.n = 0;
       this.buf = new Int16Array(1600); this.k = 0;
+      this.sq = 0; this.m = 0;
     }
     process([input]) {
       const ch = input[0];
@@ -257,33 +488,66 @@
         this.sum += ch[i]; this.n++;
         if (++this.t >= this.step) {
           this.t -= this.step;
-          this.buf[this.k++] = Math.max(-1, Math.min(1, this.sum / this.n)) * 0x7fff;
+          const s = Math.max(-1, Math.min(1, this.sum / this.n));
+          this.buf[this.k++] = s * 0x7fff;
           this.sum = 0; this.n = 0;
           if (this.k === this.buf.length) { this.port.postMessage(this.buf.slice()); this.k = 0; }
+          // the level, 50 times a second, for the waveform (audio goes out in 100 ms chunks)
+          this.sq += s * s;
+          if (++this.m === 320) { this.port.postMessage(Math.sqrt(this.sq / 320)); this.sq = 0; this.m = 0; }
         }
       }
       return true;
     }
   });`;
-  let mic = null, sending = false, micT, micFallback = false;
-  const levels = new Array(11).fill(0);
-  function level(data) {
-    let sum = 0;
-    for (let i = 0; i < data.length; i += 4) sum += data[i] * data[i];
-    // square root so quiet speech still shows; full scale is a loud voice up close
-    const v = Math.min(1, Math.sqrt(Math.sqrt(sum / (data.length / 4)) / 4000));
-    levels.push(v);
-    levels.shift();
-    document.querySelectorAll('#wave i').forEach((el, i) => { el.style.height = 4 + levels[i] * 18 + 'px'; });
-    $('#meter i').style.width = Math.round(v * 100) + '%';
-  }
-  /** open the mic once; audio only leaves the page while sending */
-  function micOpen() {
+  // Dictation gets the mic raw, as Wispr does: speech recognition does better
+  // without the browser's clean-up. Talking to axo keeps echo cancellation, so
+  // in hands-free mode axo's own voice from the speakers isn't sent back to it.
+  // Settings can't change on an open stream, so each mode has its own, both kept
+  // warm: every talk press passes through dictation on the way to Alt.
+  const mics = {};   // mode -> its open mic
+  let sending = null, micT, micFallback = false;   // sending: the mode whose mic goes to the hub
+  const AUDIO = {
+    dictate: { channelCount: 1, echoCancellation: false, noiseSuppression: false, autoGainControl: false },
+    talk: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+  };
+
+  /* ---------- the waveform and the mic meter ---------- */
+  // The level arrives 50 times a second; each frame eases towards it (fast up,
+  // slower down), and the bars are scaled from it: tallest in the middle, each
+  // with its own wobble, breathing gently when you're quiet. The loop sleeps
+  // once the wave is off screen and the level has fallen to nothing.
+  const wave = (() => {
+    const bars = [...document.querySelectorAll('#wave i')], mid = (bars.length - 1) / 2;
+    const bell = bars.map((_, i) => 1 - 0.55 * ((i - mid) / mid) ** 2);
+    const calm = matchMedia('(prefers-reduced-motion: reduce)');
+    let target = 0, lvl = 0, raf = 0, last = 0;
+    const live = () => has('v-listening') || has('v-locked');
+    function frame(now) {
+      const dt = Math.min(0.05, (now - last) / 1000), t = now / 1000;
+      last = now;
+      lvl += (target - lvl) * (1 - Math.pow(target > lvl ? 0.55 : 0.86, dt * 60));
+      bars.forEach((b, i) => {
+        const idle = calm.matches ? 0.18 : 0.14 + 0.07 * (0.5 + 0.5 * Math.sin(t * 3 - i * 0.6));
+        const wobble = calm.matches ? 1 : 0.7 + 0.3 * Math.sin(t * (7 + i * 0.9) + i * 2.1);
+        b.style.transform = 'scaleY(' + (bell[i] * (idle + (1 - idle) * Math.min(1, lvl * 1.4 * wobble))).toFixed(3) + ')';
+      });
+      $('#meter i').style.transform = 'scaleX(' + lvl.toFixed(3) + ')';
+      raf = live() || previewing || lvl > 0.004 ? requestAnimationFrame(frame) : 0;
+    }
+    const wake = () => { if (!raf) { last = performance.now(); raf = requestAnimationFrame(frame); } };
+    // square root so quiet speech still shows; 1 is a loud voice up close
+    return { wake, set: (rms) => { target = Math.min(1, Math.sqrt(rms * 8.2)); wake(); } };
+  })();
+
+  /** open a mode's mic once; audio only leaves the page while that mode is sending */
+  function micOpen(mode = 'dictate') {
     clearTimeout(micT);
-    // ponytail: the mic stays open a minute after use so the next press
+    // ponytail: the mics stay open a minute after use so the next press
     // doesn't clip your first word; the OS mic light stays on that long
-    return (mic ??= (async () => {
-      const base = { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true };
+    if (mics[mode]) return mics[mode];
+    const opening = (async () => {
+      const base = AUDIO[mode];
       let stream, why = '';
       // exactly the mic you picked; if it can't open (asleep, on another
       // machine), the default for now -- said out loud, and retried later
@@ -297,7 +561,8 @@
       await ctx.audioWorklet.addModule(URL.createObjectURL(new Blob([TAP], { type: 'text/javascript' })));
       const node = new AudioWorkletNode(ctx, 'tap');
       node.port.onmessage = ({ data }) => {
-        level(data);
+        if ((sending || 'dictate') !== mode) return;   // the other mode's mic is listening to the same room
+        if (typeof data === 'number') return wave.set(data);
         if (sending) axo.audio(new Uint8Array(data.buffer));
       };
       ctx.createMediaStreamSource(stream).connect(node);
@@ -307,21 +572,24 @@
         (micFallback ? ' — your pick could not be opened (' + why + '), will retry' : '');
       axo.micLabel(label);
       return { stream, ctx };
-    })().catch((e) => { mic = null; throw e; }));
+    })().catch((e) => { if (mics[mode] === opening) delete mics[mode]; throw e; });
+    return (mics[mode] = opening);
   }
-  function micOn() {
+  function micOn(mode) {
     if (micFallback) closeMic();   // stuck on the default: try your pick again
-    sending = true;
-    return micOpen();
+    sending = mode;
+    return micOpen(mode);
   }
+  /** close every mic but the one going to the hub */
   function closeMic() {
-    if (!mic || sending) return;
-    const m = mic;
-    mic = null;
-    m.then(({ stream, ctx }) => { stream.getTracks().forEach((t) => t.stop()); ctx.close(); }, () => {});
+    for (const [mode, m] of Object.entries(mics)) {
+      if (mode === sending) continue;
+      delete mics[mode];
+      m.then(({ stream, ctx }) => { stream.getTracks().forEach((t) => t.stop()); ctx.close(); }, () => {});
+    }
   }
   function micOff() {
-    sending = false;
+    sending = null;
     clearTimeout(micT);
     micT = setTimeout(closeMic, 60000);
   }
@@ -377,21 +645,18 @@
   }
 
   axo.on('voice', (v) => {
+    // an error is a card; the bar goes back to rest
+    if (v.state === 'error') { errorCard(v); v = { ...v, state: 'idle' }; }
     const wasOn = voice === 'listening' || voice === 'locked';
     voice = v.state;
     voiceMode = v.mode || voiceMode;
     const on = voice === 'listening' || voice === 'locked';
     if (on) {
-      micOn().catch((e) => { voice = 'error'; errMsg = 'microphone: ' + e.message; paint(); });
+      micOn(voiceMode).catch((e) => { voice = 'idle'; errorCard({ msg: 'microphone: ' + e.message }); paint(); });
       if (!wasOn) chime('start');
     } else {
       micOff();
       if (wasOn) chime('stop');
-    }
-    if (voice === 'error') {
-      errMsg = v.msg || errMsg;
-      clearTimeout(errT);
-      errT = setTimeout(() => { if (voice === 'error') { voice = 'idle'; paint(); } }, 6000);
     }
     paint();
   });
@@ -399,6 +664,18 @@
   axo.on('flush', flush);
   axo.on('caption', (t) => { caption += t; paint(); });
   axo.on('chime', chime);
+  // at the desk, a session that's done or asking you something gets a card (approvals get their own)
+  axo.on('hand', (a) => {
+    if (!a || a.waiting_kind === 'approval_request') return;
+    card('hand:' + a.id, {
+      icon: ICON.done, title: a.label + (a.waiting_kind === 'question' ? ' is asking you' : ' finished'),
+      body: a.summary || '', life: 10000,
+      actions: [
+        { label: 'Open', ghost: true, run: () => openSession(a.id) },
+        { label: 'Read it', run: () => axo.read(a.id) },
+      ],
+    });
+  });
 
   /* ---------- the panel ---------- */
   const KIND = { approval_request: 'needs approval', question: 'asked you', finished: 'done' };
@@ -408,56 +685,50 @@
     const rank = { waiting: 0, running: 1, done: 2, error: 3, idle: 4, exited: 5 };
     const sorted = [...list].sort((a, b) => (rank[look(a)] - rank[look(b)]) || (a.since - b.since));
     const waiting = sorted.filter(needsYou);
-    const approvals = waiting.filter((s) => s.waiting_kind === 'approval_request').length;
+    const asks = waiting.filter((s) => s.waiting_kind === 'approval_request').length;
     document.body.classList.toggle('tab-settings', tab === 'settings');
 
-    $('#tabs').innerHTML = [
+    $('#tabs').innerHTML = '<div class="segs">' + [
       ['all', 'All', list.length, false],
-      ['waiting', 'Waiting', waiting.length, approvals > 0],
+      ['waiting', 'Waiting', waiting.length, asks > 0],
       ['settings', 'Settings', null, false],
     ].map(([k, name, n, alert]) =>
       '<button class="tab ' + (tab === k ? 'on ' : '') + (alert ? 'alert' : '') + '" data-tab="' + k + '">' +
       name + (n === null ? '' : ' <span class="n">' + n + '</span>') + '</button>'
-    ).join('') + '<button id="add" title="Start an agent in a folder" aria-label="Start an agent in a folder">+</button>';
+    ).join('') + '</div><button id="add" class="icon-btn" title="Start an agent in a folder" aria-label="Start an agent in a folder">' + ICON.plus(15) + '</button>';
 
     const shown = tab === 'waiting' ? waiting : sorted;
-    $('#roster').innerHTML = shown.length ? shown.map((s) => {
+    $('#roster').innerHTML = shown.length ? shown.map((s, i) => {
       const approval = s.waiting_kind === 'approval_request';
       const kind = s.state === 'waiting' ? (KIND[s.waiting_kind] || 'waiting')
         : s.state === 'exited' ? 'ended'
         : s.state === 'idle' ? (s.kind === 'terminal' ? 'terminal' : 'ready') : s.state;
       // every field from the roster is escaped, attributes included: it arrives over the network
-      return '<div class="row ' + (s.id === sel ? 'sel' : '') + '" data-id="' + esc(s.id) + '">' +
+      return '<div class="row ' + (s.id === sel ? 'sel' : '') + '" style="--i:' + i + '" data-id="' + esc(s.id) + '">' +
         '<div class="head">' +
-          '<i class="dot ' + esc(look(s)) + '"></i>' +
-          '<span class="label">' + esc(s.label) +
-            (s.device ? '<span class="dev">' + esc(s.device) + '</span>' : '') + '</span>' +
-          '<span class="kind ' + (approval ? 'approval' : '') + '">' + esc(kind) + '</span>' +
-          (s.alive ? '<button class="x" data-stop="' + esc(s.id) + '" title="Stop" aria-label="Stop ' +
-            esc(s.label) + '">×</button>' : '') +
+          '<span class="name">' + esc(s.label) + '</span>' +
+          '<span class="dev">' + esc(s.device || '') + '</span>' +
+          '<span class="chip ' + (needsYou(s) ? 'wait' : '') + '"><i class="dot ' + esc(look(s)) + '"></i>' + esc(kind) + '</span>' +
+          (s.alive ? '<button class="x" data-stop="' + esc(s.id) + '" title="Stop" aria-label="Stop ' + esc(s.label) + '">' + ICON.x(12) + '</button>' : '') +
         '</div>' +
-        '<div class="body">' +
-          (s.summary ? '<div class="summary">' + esc(s.summary) + '</div>' : '') +
-          (s.did ? '<div class="did">did: ' + esc(s.did) + '</div>' : '') +
-          (approval && s.pending && s.pending.length
-            ? '<div class="pending">wants: ' + s.pending.map(esc).join('<br>') + '</div>' : '') +
-          (approval && s.kind === 'terminal'
-            ? '<div class="did">answer it in its terminal</div>'
-          : approval
-            ? '<div class="acts">' +
-                // Approve names the requests shown above it, so it can't approve one you never saw
-                '<button class="act ok" data-act="approve" data-id="' + esc(s.id) +
+        (s.summary ? '<div class="summary">' + esc(s.summary) + '</div>' : '') +
+        (s.did ? '<div class="did">' + esc(s.did) + '</div>' : '') +
+        (approval && s.pending && s.pending.length
+          ? '<div class="ask"><div class="cmd">' + s.pending.map(esc).join('<br>') + '</div>' +
+            (s.kind === 'terminal'
+              ? '<div class="note">Answer it in its terminal.</div>'
+              // Approve names the requests shown above it, so it can't approve one you never saw
+              : '<div class="acts"><button class="btn primary" data-act="approve" data-id="' + esc(s.id) +
                   '" data-asks="' + esc(JSON.stringify(s.pending_ids || [])) + '">Approve</button>' +
-                '<button class="act no" data-act="deny" data-id="' + esc(s.id) + '">Deny</button>' +
-              '</div>' : '') +
-        '</div>' +
+                '<button class="btn ghost" data-act="deny" data-id="' + esc(s.id) + '">Deny</button></div>') +
+            '</div>' : '') +
       '</div>';
     }).join('')
       : '<div id="empty">' + (tab === 'waiting'
           ? 'Nothing waiting on you.'
           : 'No agents yet.<br>Hit + to start one in a folder.') + '</div>';
 
-    for (const t of document.querySelectorAll('.tab')) {
+    for (const t of document.querySelectorAll('#tabs .tab')) {
       t.onclick = () => { tab = t.dataset.tab; render(); if (tab === 'settings') devices(); };
     }
     $('#add').onclick = async () => { const id = await axo.pick(); if (id) { sel = id; tab = 'all'; render(); } };
@@ -482,13 +753,15 @@
       : 'Reply to ' + cur.label + '…';
 
     // the Settings tab doubles as a mic test: the meter moves while it's open
-    const preview = tab === 'settings' && document.body.classList.contains('open');
-    if (preview && !previewing) micOpen().catch((e) => { $('#set-err').textContent = 'Microphone: ' + e.message; });
+    const preview = tab === 'settings' && has('open');
+    if (preview && !previewing) micOpen().then(() => wave.wake(), (e) => { $('#set-err').textContent = 'Microphone: ' + e.message; });
     else if (!preview && previewing) closeMic();
     previewing = preview;
 
     $('#k-dictate').textContent = settings.dictate || '';
     $('#k-talk').textContent = settings.talk || '';
+    $('#hint').innerHTML = settings.dictate
+      ? 'Hold <b>' + esc(settings.dictate) + '</b> to dictate · <b>' + esc(settings.talk) + '</b> to talk to axo' : '';
     for (const b of document.querySelectorAll('[data-mode]')) b.classList.toggle('on', b.dataset.mode === settings.mode);
     for (const b of document.querySelectorAll('[data-clean]')) b.classList.toggle('on', (b.dataset.clean === 'on') === (settings.clean !== false));
   }
@@ -552,8 +825,14 @@
     sel.onblur = () => axo.focus(false);
   }
 
-  axo.on('sessions', (l) => { list = l; render(); });
-  axo.on('link', (up) => { hubUp = up; paint(); });
+  axo.on('sessions', (l) => { list = l; render(); approvals(); });
+  axo.on('link', (up) => {
+    hubUp = up;
+    if (up) drop('hub');
+    else card('hub', { icon: ICON.unlink, tone: 'bad', title: 'Hub offline', life: 0,
+      body: 'Reconnecting. Agents and voice pause until it\'s back.' });
+    paint();
+  });
   axo.on('settings', (s) => {
     const was = settings;
     settings = s;
@@ -564,6 +843,6 @@
     if (s.speaker !== was.speaker) { speaker(); sink().then(() => chime('start')); }   // a ping on the new speaker
     render();
   });
-  axo.list().then((l) => { list = l; render(); });
+  axo.list().then((l) => { list = l; render(); approvals(); });
   axo.settings().then((s) => { settings = s; render(); });
 </script>
