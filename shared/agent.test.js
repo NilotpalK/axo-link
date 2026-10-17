@@ -64,6 +64,27 @@ test('turn end settles to waiting, with what it did and a spoken-length brief', 
   assert.match(child.written.join(''), /"content":"do the thing"/);
 });
 
+test('a reply sent mid-task joins the running turn; the next turn counts afresh', async () => {
+  const s = new Sessions(fakeSpawn);
+  const id = s.start({ label: 'test' });
+  const child = fakeSpawn.last;
+  s.send(id, 'run sleep 6, then echo one');
+  const seen = nextEvent(s, 'update');
+  child.stdout.write(assistant('Sleeping.', ['Bash']));
+  await seen;                                      // the first tool is counted before the reply
+  s.send(id, 'also say SECOND');
+  let settled = nextEvent(s, 'waiting');
+  child.stdout.write(assistant('Echoing.', ['Bash']));
+  child.stdout.write(line({ type: 'result', is_error: false, result: 'FIRST\nSECOND' }));
+  assert.equal((await settled).did, 'Bash ×2', 'one result covers both, as claude 2.1.301 does');
+
+  s.send(id, 'now read the readme');
+  settled = nextEvent(s, 'waiting');
+  child.stdout.write(assistant('Read it.', ['Read']));
+  child.stdout.write(line({ type: 'result', is_error: false, result: 'Done.' }));
+  assert.equal((await settled).did, 'Read');
+});
+
 const ask = (id, tool, input) => line({
   type: 'control_request', request_id: id,
   request: { subtype: 'can_use_tool', tool_name: tool, input },

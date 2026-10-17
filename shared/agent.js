@@ -108,13 +108,15 @@ const VENDORS = {
         // approvals are answered mid-turn now, so a settled turn is never
         // waiting on one -- anything in permission_denials we denied ourselves
         const summary = brief(o.result || turn.text);
-        turn.asks = [];
+        const did = tally(turn.tools);
+        // the turn ends here, not when you send: a reply sent mid-task goes
+        // into the running turn (claude 2.1.301: one result covers both)
+        Object.assign(turn, freshTurn());
         return {
           state: o.is_error === true ? 'error' : 'waiting',
           waiting_kind: kindOf(summary),
           pending: [], pending_ids: [],
-          summary,
-          did: tally(turn.tools),
+          summary, did,
         };
       }
       return null;
@@ -203,7 +205,6 @@ class Sessions extends EventEmitter {
     // typing back while it waits on approval is "no -- do this instead"
     if (p.turn.asks.length) return this.#answer(id, false, text);
     p.child.stdin.write(VENDORS[p.vendor].write(text));
-    p.turn = freshTurn();
     // `last` stays the agent's own words; what you sent is `prompt`
     this.#set(id, {
       state: 'running', prompt: text,
