@@ -19,8 +19,8 @@ const path = require('node:path');
 const http = require('node:http');
 const { once, EventEmitter } = require('node:events');
 const { randomUUID, randomBytes } = require('node:crypto');
-const { connect } = require('../shared/link');
-const { brief, tally, argText, kindOf } = require('../shared/agent');
+const { connect } = require('../../../shared/link');
+const { brief, tally, argText, kindOf } = require('../../sessions');
 
 /** where the companion app leaves the hub's address and this run's token */
 function hubFile() {
