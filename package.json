@@ -6,7 +6,8 @@
   "main": "app/main.js",
   "scripts": {
     "start": "electron .",
-    "test": "node --test"
+    "test": "node --test",
+    "postinstall": "node -e \"const fs=require('fs'),d='node_modules/node-pty/prebuilds';try{for(const p of fs.readdirSync(d))if(fs.existsSync(d+'/'+p+'/spawn-helper'))fs.chmodSync(d+'/'+p+'/spawn-helper',0o755)}catch{}\""
   },
   "devDependencies": {
     "electron": "^44.0.0"
