@@ -84,6 +84,10 @@
   #lay-text.clip { justify-content: flex-end; padding: 0 18px; -webkit-mask-image: linear-gradient(90deg, transparent, #000 28px); }
   .say { font-size: 13px; color: var(--dim); flex: none; }
   body.v-speaking #text { color: var(--text); font-size: 13.5px; }
+  /* the summary carries the desk/away button at its right end; a caption doesn't */
+  body.v-idle #lay-text { justify-content: space-between; padding: 0 4px 0 18px; }
+  body.v-idle #hit:hover #lay-text, body.v-idle.open #lay-text { pointer-events: auto; }
+  body:not(.v-idle) #bar-mode { display: none; }
 
   /* ✕ and ✓ while listening: discard, or finish */
   .vbtn {
@@ -168,6 +172,21 @@
   }
   .icon-btn:hover { color: var(--text); border-color: var(--dim); }
   .icon-btn:active { transform: scale(.94); }
+  /* desk or away: a switch whose thumb slides to the side that's on, grey at
+     the desk, yellow while axo speaks updates. Equal halves, so the thumb fits either. */
+  .mode {
+    position: relative; display: grid; grid-template-columns: 1fr 1fr; padding: 2px;
+    height: 26px; border-radius: 999px; background: var(--bg-3); font-size: 12px; font-weight: 600;
+  }
+  .mode i {
+    position: absolute; top: 2px; bottom: 2px; left: 2px; width: calc(50% - 2px); border-radius: 999px;
+    background: #3a3a40; transition: transform 320ms var(--spring), background-color 200ms ease;
+  }
+  .mode.away i { transform: translateX(100%); background: var(--amber); }
+  .mode span { position: relative; display: grid; place-items: center; padding: 0 9px; color: var(--faint); transition: color var(--quick); }
+  .mode:hover span { color: var(--dim); }
+  .mode:not(.away) span:first-of-type { color: var(--text); }
+  .mode.away span:last-of-type { color: #000; }
 
   /* ---- the panel, springing up out of the bar ---- */
   #panel {
@@ -193,7 +212,7 @@
   .tab.on { background: #2c2c30; color: var(--text); }
   .tab .n { color: var(--faint); margin-left: 2px; }
   .tab.alert .n { color: var(--amber); }
-  #add { margin-left: auto; }
+  #tabs .mode { margin-left: auto; height: 30px; font-size: 12.5px; }
 
   #roster { flex: 1; overflow-y: auto; padding: 0 8px 6px; }
   .row { padding: 12px 12px; border-radius: 14px; cursor: pointer; transition: background-color var(--quick); }
@@ -283,11 +302,8 @@
       </div>
       <p class="note">Removes "um"s and fixes punctuation. Adds about a second after you let go;
         Off types your exact words straight away.</p>
-      <div class="srow"><span>When an agent finishes</span>
-        <div class="segs"><button class="tab" data-mode="desk">Chime</button><button class="tab" data-mode="away">Speak</button></div>
-      </div>
       <div id="set-err" class="err" role="alert"></div>
-      <p class="hint">Hold a hotkey to talk; tap it for hands-free. "Speak" is for when you're away;
+      <p class="hint">Hold a hotkey to talk; tap it for hands-free. Desk or Away is the button on the bar;
         you can also just tell axo you're driving.</p>
     </div>
     <div id="compose"><input id="msg" placeholder="Select a session…" disabled></div>
@@ -302,7 +318,7 @@
       <button class="vbtn" id="v-done" title="Finish" aria-label="Finish"></button>
     </div>
     <div class="layer" id="lay-think"><div id="dots"><i></i><i></i><i></i></div></div>
-    <div class="layer" id="lay-text"><span class="say" id="text"></span></div>
+    <div class="layer" id="lay-text"><span class="say" id="text"></span><button class="mode" id="bar-mode" role="switch" aria-label="Away mode"></button></div>
   </div></div>
   <div id="hint"></div>
   <div id="cards" role="status" aria-live="polite"></div>
@@ -375,12 +391,27 @@
   /* ---------- the bar ---------- */
   const has = (c) => document.body.classList.contains(c);
   const textShown = () => has('v-speaking') || (has('v-idle') && (has('open') || over));   // over: the cursor is on the bar
+  // Desk or away, from the bar or the panel header. Main saves the switch and
+  // sends the settings back, so both buttons -- and axo's set_mode -- agree.
+  const toggleMode = () => axo.setMode(settings.mode === 'away' ? 'desk' : 'away');
+  const SWITCH = '<i></i><span>Desk</span><span>Away</span>';   // the thumb, then both sides
+  function modeButton(b) {
+    const away = settings.mode === 'away';
+    b.classList.toggle('away', away);
+    b.setAttribute('aria-checked', away);
+    b.title = away ? 'Away: axo says it out loud when an agent finishes. Click for desk.'
+      : 'Desk: a chime and a card when an agent finishes. Click for away.';
+  }
+
   // the bar is as wide as what it says, so a caption grows it word by word
   function say(s) {
     const el = $('#text');
     if (el.textContent === s) return;
     el.textContent = s;
-    const fit = el.scrollWidth + 36;
+    // with the mode button showing: 18px before the words, a 10px gap, 4px
+    // after the button and the border, in place of 18px a side
+    const mode = $('#bar-mode').offsetWidth;   // 0 while it's hidden, over a caption
+    const fit = el.scrollWidth + 36 + (mode && mode - 2);
     $('#bar').style.setProperty('--fit', fit + 'px');
     $('#lay-text').classList.toggle('clip', fit > 400);
   }
@@ -396,12 +427,13 @@
       $('#mode-tag').textContent = voiceMode === 'talk' ? 'axo' : '';
       wave.wake();
     }
+    modeButton($('#bar-mode'));
     // a layer that is fading out keeps its words; only the one on screen changes
     if (textShown()) say(
       state === 'speaking' ? caption.slice(-64)   // the newest words
       : !hubUp ? 'no hub'
       : (list.length ? list.length + (list.length === 1 ? ' agent' : ' agents') : 'no agents') +
-        (waiting ? ' · ' + waiting + ' waiting' : '') + (settings.mode === 'away' ? ' · away' : ''));
+        (waiting ? ' · ' + waiting + ' waiting' : ''));   // desk or away is the switch beside it
   }
 
   // opening the panel lets its rows arrive one by one
@@ -412,7 +444,9 @@
     if (on) { b.add('entering'); clearTimeout(enterT); enterT = setTimeout(() => b.remove('entering'), 700); }
     render();
   }
-  $('#hit').onclick = (e) => { if (!e.target.closest('.vbtn')) openPanel(!has('open')); };
+  $('#hit').onclick = (e) => { if (!e.target.closest('.vbtn, .mode')) openPanel(!has('open')); };
+  $('#bar-mode').innerHTML = SWITCH;
+  $('#bar-mode').onclick = toggleMode;
   $('#v-cancel').onclick = () => axo.endVoice(true);
   $('#v-done').onclick = () => axo.endVoice(false);
 
@@ -773,7 +807,10 @@
     ].map(([k, name, n, alert]) =>
       '<button class="tab ' + (tab === k ? 'on ' : '') + (alert ? 'alert' : '') + '" data-tab="' + k + '">' +
       name + (n === null ? '' : ' <span class="n">' + n + '</span>') + '</button>'
-    ).join('') + '</div><button id="add" class="icon-btn" title="Start an agent in a folder" aria-label="Start an agent in a folder">' + ICON.plus(15) + '</button>';
+    ).join('') + '</div><button class="mode" role="switch" aria-label="Away mode">' + SWITCH + '</button>' +
+      '<button id="add" class="icon-btn" title="Start an agent in a folder" aria-label="Start an agent in a folder">' + ICON.plus(15) + '</button>';
+    modeButton($('#tabs .mode'));
+    $('#tabs .mode').onclick = toggleMode;
 
     const shown = tab === 'waiting' ? waiting : sorted;
     $('#roster').innerHTML = shown.length ? shown.map((s, i) => {
@@ -840,7 +877,6 @@
     $('#k-talk').textContent = settings.talk || '';
     $('#hint').innerHTML = settings.dictate
       ? 'Hold <b>' + esc(settings.dictate) + '</b> to dictate · <b>' + esc(settings.talk) + '</b> to talk to axo' : '';
-    for (const b of document.querySelectorAll('[data-mode]')) b.classList.toggle('on', b.dataset.mode === settings.mode);
     for (const b of document.querySelectorAll('[data-clean]')) b.classList.toggle('on', (b.dataset.clean === 'on') === (settings.clean !== false));
   }
 
@@ -865,7 +901,6 @@
       render();
     };
   }
-  for (const b of document.querySelectorAll('[data-mode]')) b.onclick = () => axo.setMode(b.dataset.mode);
   for (const b of document.querySelectorAll('[data-clean]')) b.onclick = () => axo.setClean(b.dataset.clean === 'on');
 
   /* ---------- mic and speaker pickers ---------- */
