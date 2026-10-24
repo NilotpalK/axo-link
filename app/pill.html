@@ -16,8 +16,8 @@
     --cream:     #efece6;
     --font:      "Segoe UI Variable Text", "Segoe UI", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
     --mono:      "Cascadia Mono", ui-monospace, Consolas, monospace;
-    /* shape changes ride a spring; the script swaps in the real curve at load */
-    --spring:    cubic-bezier(.2, .8, .2, 1);
+    /* shape changes ease out: quick to start, then settling, never past the mark */
+    --ease-out:  cubic-bezier(.16, 1, .3, 1);
     --morph:     420ms;
     --fade:      170ms ease;
     --quick:     120ms cubic-bezier(.2, .9, .3, 1);
@@ -44,13 +44,13 @@
      16 px under the bar): past the edge of this transparent window they are cut
      off in a hard line, which shows as a grey box over whatever is behind. */
 
-  /* ---- the bar: one shape that morphs on a spring from the bottom centre ---- */
+  /* ---- the bar: one shape that morphs from the bottom centre ---- */
   #hit { padding: 6px 12px; cursor: pointer; }   /* a bigger target than the bar itself */
   #bar {
     position: relative; height: 10px; width: 48px; border-radius: 999px;
     background-color: var(--bg); border: 1px solid var(--line-2); overflow: hidden;
     box-shadow: 0 2px 6px rgba(0, 0, 0, .35);
-    transition: width var(--morph) var(--spring), height var(--morph) var(--spring),
+    transition: width var(--morph) var(--ease-out), height var(--morph) var(--ease-out),
       background-color 240ms ease, border-color 240ms ease, box-shadow 240ms ease;
   }
   /* --fit is the width of what the bar says, measured by the script */
@@ -72,7 +72,7 @@
     position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; gap: 10px;
     white-space: nowrap; pointer-events: none;
     opacity: 0; transform: scale(.9); filter: blur(2px);
-    transition: opacity var(--fade), filter var(--fade), transform var(--morph) var(--spring);
+    transition: opacity var(--fade), filter var(--fade), transform var(--morph) var(--ease-out);
   }
   body.v-listening #lay-listen, body.v-locked #lay-listen, body.v-thinking #lay-think,
   body.v-idle #hit:hover #lay-text, body.v-idle.open #lay-text, body.v-speaking #lay-text {
@@ -114,7 +114,7 @@
     position: absolute; bottom: 56px; left: 50%; transform: translate(-50%, 4px); opacity: 0;
     padding: 6px 10px; border-radius: 10px; background: var(--bg); border: 1px solid var(--line);
     font-size: 12px; color: var(--dim); white-space: nowrap; pointer-events: none;
-    transition: opacity var(--fade), transform var(--morph) var(--spring);
+    transition: opacity var(--fade), transform var(--morph) var(--ease-out);
   }
   #hint b { color: var(--text); font-weight: 500; }
   body.v-idle:not(.open) #hit:hover ~ #hint { opacity: 1; transform: translate(-50%, 0); transition-delay: 450ms; }
@@ -129,7 +129,7 @@
   .card {
     width: min(384px, calc(100vw - 36px)); padding: 16px 14px 14px 18px; border-radius: 22px;
     background: var(--bg); border: 1px solid var(--line-2); box-shadow: 0 4px 12px rgba(0, 0, 0, .45);
-    transform-origin: 50% 100%; animation: card-in var(--morph) var(--spring) both;
+    transform-origin: 50% 100%; animation: card-in var(--morph) var(--ease-out) both;
   }
   .card.out { animation: card-out 200ms ease-in both; }
   @keyframes card-in { from { opacity: 0; transform: translateY(14px) scale(.95); } }
@@ -180,7 +180,7 @@
   }
   .mode i {
     position: absolute; top: 2px; bottom: 2px; left: 2px; width: calc(50% - 2px); border-radius: 999px;
-    background: #3a3a40; transition: transform 320ms var(--spring), background-color 200ms ease;
+    background: #3a3a40; transition: transform 320ms var(--ease-out), background-color 200ms ease;
   }
   .mode.away i { transform: translateX(100%); background: var(--amber); }
   .mode span { position: relative; display: grid; place-items: center; padding: 0 9px; color: var(--faint); transition: color var(--quick); }
@@ -188,13 +188,13 @@
   .mode:not(.away) span:first-of-type { color: var(--text); }
   .mode.away span:last-of-type { color: #000; }
 
-  /* ---- the panel, springing up out of the bar ---- */
+  /* ---- the panel, rising out of the bar ---- */
   #panel {
     width: min(400px, calc(100vw - 20px)); max-height: 384px; display: flex; flex-direction: column;
     background: var(--bg); border: 1px solid var(--line-2); border-radius: 22px; overflow: hidden;
     box-shadow: 0 2px 8px rgba(0, 0, 0, .4);
     transform-origin: 50% 100%;
-    transition: opacity var(--fade), transform var(--morph) var(--spring), visibility 0s;
+    transition: opacity var(--fade), transform var(--morph) var(--ease-out), visibility 0s;
   }
   body:not(.open) #panel {
     opacity: 0; transform: translateY(10px) scale(.96); visibility: hidden; pointer-events: none;
@@ -202,16 +202,25 @@
   }
   /* on opening, the rows arrive one after another */
   body.entering #roster { overflow: hidden; }   /* no scrollbar flash while they slide in */
-  body.entering .row { animation: row-in 380ms var(--spring) both; animation-delay: calc(40ms + var(--i, 0) * 28ms); }
+  body.entering .row { animation: row-in 380ms var(--ease-out) both; animation-delay: calc(40ms + var(--i, 0) * 28ms); }
   @keyframes row-in { from { opacity: 0; transform: translateY(6px); } }
 
   #tabs { flex: none; display: flex; align-items: center; gap: 8px; padding: 12px 12px 8px; }
-  .segs { display: flex; padding: 3px; border-radius: 11px; background: var(--bg-3); }
+  .segs { position: relative; display: flex; padding: 3px; border-radius: 11px; background: var(--bg-3); }
   .tab { font-size: 13px; padding: 5px 12px; border-radius: 8px; color: var(--dim); transition: color var(--quick), background-color var(--quick); }
   .tab:hover { color: var(--text); }
   .tab.on { background: #2c2c30; color: var(--text); }
   .tab .n { color: var(--faint); margin-left: 2px; }
   .tab.alert .n { color: var(--amber); }
+  /* the panel's tabs share one highlight, clipped to the tab that's on, so it
+     slides across when you switch; render() sets --l and --r */
+  #tabs .ind {
+    position: absolute; inset: 3px; background: #2c2c30;
+    clip-path: inset(0 var(--r, 0px) 0 var(--l, 0px) round 8px);
+    transition: clip-path 320ms var(--ease-out);
+  }
+  #tabs .tab { position: relative; }
+  #tabs .tab.on { background: none; }
   #tabs .mode { margin-left: auto; height: 30px; font-size: 12.5px; }
 
   #roster { flex: 1; overflow-y: auto; padding: 0 8px 6px; }
@@ -263,8 +272,9 @@
   }
   .srow select:focus { border-color: var(--dim); }
   .srow select option { background: var(--bg-3); }
-  #meter { height: 4px; border-radius: 2px; background: var(--bg-3); margin: 0 0 6px; overflow: hidden; }
-  #meter i { display: block; height: 100%; width: 100%; background: var(--text); transform: scaleX(0); transform-origin: left; }
+  /* the mic's level beside its name: the recording wave in miniature */
+  #mic-wave { display: inline-flex; align-items: center; gap: 2px; height: 12px; margin-left: 9px; vertical-align: -1px; }
+  #mic-wave i { width: 2px; height: 12px; border-radius: 1px; background: var(--dim); transform: scaleY(.2); will-change: transform; }
   kbd { font: 12px var(--mono); color: var(--text); padding: 4px 8px; border-radius: 7px; background: var(--bg-3); }
   .note { color: var(--faint); font-size: 12px; line-height: 1.5; margin: -2px 0 6px; }
   .hint { color: var(--faint); font-size: 12px; margin-top: 8px; line-height: 1.6; }
@@ -288,13 +298,16 @@
 
 <div id="stage">
   <div id="panel">
-    <div id="tabs"></div>
+    <div id="tabs">
+      <div class="segs"><i class="ind"></i><button class="tab" data-tab="all">All <span class="n"></span></button><button class="tab" data-tab="waiting">Waiting <span class="n"></span></button><button class="tab" data-tab="settings">Settings</button></div>
+      <button class="mode" id="head-mode" role="switch" aria-label="Away mode"></button>
+      <button id="add" class="icon-btn" title="Start an agent in a folder" aria-label="Start an agent in a folder"></button>
+    </div>
     <div id="roster"></div>
     <div id="settings">
       <div class="srow"><span>Dictate</span><div class="ctl"><kbd id="k-dictate"></kbd><button class="btn ghost" data-rec="dictate">Change</button></div></div>
       <div class="srow"><span>Talk to axo</span><div class="ctl"><kbd id="k-talk"></kbd><button class="btn ghost" data-rec="talk">Change</button></div></div>
-      <div class="srow"><label for="mic">Microphone</label><select id="mic"></select></div>
-      <div id="meter" role="meter" aria-label="Microphone level" title="Speak: this bar should move"><i></i></div>
+      <div class="srow"><label for="mic">Microphone<span id="mic-wave" title="Speak: this should move" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span></label><select id="mic"></select></div>
       <p id="mic-using" class="hint"></p>
       <div class="srow"><label for="speaker">Speaker</label><select id="speaker"></select></div>
       <div class="srow"><span>Clean up dictation</span>
@@ -376,18 +389,6 @@
   const look = (s) => (s.state === 'waiting' && !needsYou(s) ? 'done' : s.state);
   let voice = 'idle', voiceMode = 'dictate', caption = '', speaking = false, previewing = false;
 
-  /* ---------- motion ---------- */
-  // A damped spring from rest to 1, sampled into a CSS linear() easing: shape
-  // changes start fast, overshoot by about 3% and settle within --morph.
-  // zeta is the damping (1 = no overshoot); the envelope is down to 0.1% at the end.
-  function springEasing(zeta = 0.75, steps = 40) {
-    const w = Math.log(1000) / zeta, wd = w * Math.sqrt(1 - zeta * zeta);
-    const x = (t) => 1 - Math.exp(-zeta * w * t) * (Math.cos(wd * t) + (zeta * w / wd) * Math.sin(wd * t));
-    const pts = Array.from({ length: steps + 1 }, (_, i) => (i === steps ? 1 : +x(i / steps).toFixed(4)));
-    return 'linear(' + pts.join(', ') + ')';
-  }
-  document.documentElement.style.setProperty('--spring', springEasing());
-
   /* ---------- the bar ---------- */
   const has = (c) => document.body.classList.contains(c);
   const textShown = () => has('v-speaking') || (has('v-idle') && (has('open') || over));   // over: the cursor is on the bar
@@ -447,6 +448,28 @@
   $('#hit').onclick = (e) => { if (!e.target.closest('.vbtn, .mode')) openPanel(!has('open')); };
   $('#bar-mode').innerHTML = SWITCH;
   $('#bar-mode').onclick = toggleMode;
+  $('#head-mode').innerHTML = SWITCH;
+  $('#head-mode').onclick = toggleMode;
+  $('#add').innerHTML = ICON.plus(15);
+  $('#add').onclick = async () => { const id = await axo.pick(); if (id) { sel = id; switchTab('all'); } };
+  for (const t of document.querySelectorAll('#tabs .tab')) t.onclick = () => switchTab(t.dataset.tab);
+
+  // Switching tabs: the highlight slides across (CSS), the panel eases to its
+  // new height, and the view that's new fades up into place.
+  const calmMotion = matchMedia('(prefers-reduced-motion: reduce)');
+  function switchTab(next) {
+    const panel = $('#panel'), from = panel.offsetHeight, was = tab;
+    tab = next;
+    render();
+    if (tab === 'settings') devices();
+    if (tab === was || calmMotion.matches) return;
+    const ease = getComputedStyle(document.documentElement).getPropertyValue('--ease-out').trim();
+    const to = panel.offsetHeight;
+    if (to !== from) panel.animate({ height: [from + 'px', to + 'px'] }, { duration: 320, easing: ease });
+    // All and Waiting share the reply box; it only arrives when leaving Settings
+    const fresh = tab === 'settings' ? ['#settings'] : was === 'settings' ? ['#roster', '#compose'] : ['#roster'];
+    for (const s of fresh) $(s).animate({ opacity: [0, 1], transform: ['translateY(4px)', 'none'] }, { duration: 240, easing: ease });
+  }
   $('#v-cancel').onclick = () => axo.endVoice(true);
   $('#v-done').onclick = () => axo.endVoice(false);
 
@@ -616,14 +639,18 @@
     talk: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
   };
 
-  /* ---------- the waveform and the mic meter ---------- */
+  /* ---------- the waveforms ---------- */
   // The level arrives 50 times a second; each frame eases towards it (fast up,
   // slower down), and the bars are scaled from it: tallest in the middle, each
-  // with its own wobble, breathing gently when you're quiet. The loop sleeps
-  // once the wave is off screen and the level has fallen to nothing.
+  // with its own wobble, breathing gently when you're quiet. Two waves share it:
+  // the bar's while you record, and its miniature beside the Settings mic. The
+  // loop sleeps once neither is on screen and the level has fallen to nothing.
   const wave = (() => {
-    const bars = [...document.querySelectorAll('#wave i')], mid = (bars.length - 1) / 2;
-    const bell = bars.map((_, i) => 1 - 0.55 * ((i - mid) / mid) ** 2);
+    const bars = [], bell = [];
+    for (const set of ['#wave i', '#mic-wave i']) {
+      const own = [...document.querySelectorAll(set)], mid = (own.length - 1) / 2;
+      own.forEach((b, i) => { bars.push(b); bell.push(1 - 0.55 * ((i - mid) / mid) ** 2); });
+    }
     const calm = matchMedia('(prefers-reduced-motion: reduce)');
     let target = 0, lvl = 0, raf = 0, last = 0;
     const live = () => has('v-listening') || has('v-locked');
@@ -636,7 +663,6 @@
         const wobble = calm.matches ? 1 : 0.7 + 0.3 * Math.sin(t * (7 + i * 0.9) + i * 2.1);
         b.style.transform = 'scaleY(' + (bell[i] * (idle + (1 - idle) * Math.min(1, lvl * 1.4 * wobble))).toFixed(3) + ')';
       });
-      $('#meter i').style.transform = 'scaleX(' + lvl.toFixed(3) + ')';
       raf = live() || previewing || lvl > 0.004 ? requestAnimationFrame(frame) : 0;
     }
     const wake = () => { if (!raf) { last = performance.now(); raf = requestAnimationFrame(frame); } };
@@ -800,17 +826,18 @@
     const asks = waiting.filter((s) => s.waiting_kind === 'approval_request').length;
     document.body.classList.toggle('tab-settings', tab === 'settings');
 
-    $('#tabs').innerHTML = '<div class="segs">' + [
-      ['all', 'All', list.length, false],
-      ['waiting', 'Waiting', waiting.length, asks > 0],
-      ['settings', 'Settings', null, false],
-    ].map(([k, name, n, alert]) =>
-      '<button class="tab ' + (tab === k ? 'on ' : '') + (alert ? 'alert' : '') + '" data-tab="' + k + '">' +
-      name + (n === null ? '' : ' <span class="n">' + n + '</span>') + '</button>'
-    ).join('') + '</div><button class="mode" role="switch" aria-label="Away mode">' + SWITCH + '</button>' +
-      '<button id="add" class="icon-btn" title="Start an agent in a folder" aria-label="Start an agent in a folder">' + ICON.plus(15) + '</button>';
-    modeButton($('#tabs .mode'));
-    $('#tabs .mode').onclick = toggleMode;
+    // the tabs are updated, never rebuilt, so their highlight can slide between them
+    const counts = { all: list.length, waiting: waiting.length };
+    for (const t of document.querySelectorAll('#tabs .tab')) {
+      const k = t.dataset.tab;
+      t.classList.toggle('on', k === tab);
+      t.classList.toggle('alert', k === 'waiting' && asks > 0);
+      if (k in counts) t.querySelector('.n').textContent = counts[k];
+    }
+    const on = $('#tabs .tab.on'), segs = $('#tabs .segs');   // .ind sits 3px inside .segs
+    segs.style.setProperty('--l', on.offsetLeft - 3 + 'px');
+    segs.style.setProperty('--r', segs.clientWidth - on.offsetLeft - on.offsetWidth - 3 + 'px');
+    modeButton($('#head-mode'));
 
     const shown = tab === 'waiting' ? waiting : sorted;
     $('#roster').innerHTML = shown.length ? shown.map((s, i) => {
@@ -843,10 +870,6 @@
           ? 'Nothing waiting on you.'
           : 'No agents yet.<br>Hit + to start one in a folder.') + '</div>';
 
-    for (const t of document.querySelectorAll('#tabs .tab')) {
-      t.onclick = () => { tab = t.dataset.tab; render(); if (tab === 'settings') devices(); };
-    }
-    $('#add').onclick = async () => { const id = await axo.pick(); if (id) { sel = id; tab = 'all'; render(); } };
     for (const b of document.querySelectorAll('.acts button')) {
       b.onclick = (e) => {
         e.stopPropagation();
@@ -867,7 +890,8 @@
       : cur.waiting_kind === 'approval_request' ? 'Or tell ' + cur.label + ' what to do instead…'
       : 'Reply to ' + cur.label + '…';
 
-    // the Settings tab doubles as a mic test: the meter moves while it's open
+    // the Settings tab doubles as a mic test: it opens the mic, says which one
+    // it really is, and the mini wave beside it moves as you speak
     const preview = tab === 'settings' && has('open');
     if (preview && !previewing) micOpen().then(() => wave.wake(), (e) => { $('#set-err').textContent = micProblem(e); });
     else if (!preview && previewing) closeMic();
